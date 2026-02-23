@@ -248,85 +248,91 @@ local function getMobsInKillRange()
     return mobsInRange
 end
 
--- FUNGSI: Scan semua remote event yang mungkin
-local function scanRemotes()
-    print("=================================")
-    print("🔍 SCAN REMOTE EVENT:")
-    print("=================================")
+-- FUNGSI: KILL AURA DENGAN REMOTE SPAM
+local function killAura()
+    if not killAuraActive or not floatingActive then return end
     
-    local ditemukan = 0
+    local currentTime = tick()
+    if currentTime - lastKillTime < killCooldown then return end
     
-    -- Scan ReplicatedStorage
-    for _, remote in ipairs(game:GetService("ReplicatedStorage"):GetChildren()) do
-        if remote:IsA("RemoteEvent") then
-            ditemukan = ditemukan + 1
-            print("ReplicatedStorage:", remote.Name)
+    local mobs = getMobsInKillRange()
+    
+    for _, mob in ipairs(mobs) do
+        if mob and mob.humanoid and mob.humanoid.Health > 0 then
+            
+            -- =============================================
+            -- METODE 1: REMOTE EVENT SPAM (PALING EFEKTIF)
+            -- =============================================
+            pcall(function()
+                -- Cari semua remote di ReplicatedStorage
+                for _, remote in ipairs(game:GetService("ReplicatedStorage"):GetChildren()) do
+                    if remote:IsA("RemoteEvent") then
+                        -- Coba berbagai parameter
+                        remote:FireServer(mob.model)
+                        remote:FireServer(mob.model, mob.humanoid)
+                        remote:FireServer(mob.rootPart)
+                        remote:FireServer(mob.model, damageAmount)
+                        remote:FireServer("attack", mob.model)
+                        remote:FireServer(mob.model, mob.humanoid.Health)
+                    end
+                end
+                
+                -- Cari remote di Players
+                for _, remote in ipairs(player.PlayerScripts:GetChildren()) do
+                    if remote:IsA("RemoteEvent") then
+                        remote:FireServer(mob.model)
+                    end
+                end
+                
+                -- Cari remote di Workspace
+                for _, remote in ipairs(workspace:GetChildren()) do
+                    if remote:IsA("RemoteEvent") then
+                        remote:FireServer(mob.model)
+                    end
+                end
+            end)
+            
+            -- =============================================
+            -- METODE 2: DAMAGE BERKALI-KALI
+            -- =============================================
+            pcall(function()
+                for i = 1, 100 do  -- Spam 100 kali
+                    mob.humanoid.Health = mob.humanoid.Health - damageAmount
+                    if mob.humanoid.TakeDamage then
+                        mob.humanoid:TakeDamage(damageAmount * 10)
+                    end
+                    wait()
+                end
+            end)
+            
+            -- =============================================
+            -- METODE 3: PAKSA HEALTH 0 (100x spam)
+            -- =============================================
+            pcall(function()
+                for i = 1, 100 do
+                    mob.humanoid.Health = 0
+                    wait()
+                end
+            end)
+            
+            -- =============================================
+            -- METODE 4: BREAK JOINTS (PAKSA MATI)
+            -- =============================================
+            pcall(function()
+                mob.model:BreakJoints()
+                wait(0.1)
+                for _, part in ipairs(mob.model:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        part:Destroy()
+                    end
+                end
+            end)
+            
+            print("⚔️ Kill Aura diterapkan ke:", mob.model.Name)
         end
     end
     
-    -- Scan Players
-    for _, remote in ipairs(player.PlayerScripts:GetChildren()) do
-        if remote:IsA("RemoteEvent") then
-            ditemukan = ditemukan + 1
-            print("PlayerScripts:", remote.Name)
-        end
-    end
-    
-    print("Total remote ditemukan:", ditemukan)
-    print("=================================")
-end
-
--- TAMBAHKAN KEYBIND UNTUK SCAN (tombol R)
-if input.KeyCode == Enum.KeyCode.R then
-    scanRemotes()
-end
-
--- FUNGSI: DIAGNOSA MOB (Tekan D untuk cek kenapa tidak mati)
-local function diagnoseMobDeath()
-    if not currentTarget or not currentTarget.humanoid then 
-        print("❌ Tidak ada target untuk diagnosa")
-        return 
-    end
-    
-    local health = currentTarget.humanoid.Health
-    local maxHealth = currentTarget.humanoid.MaxHealth
-    
-    print("=================================")
-    print("🔍 DIAGNOSA MOB:")
-    print("=================================")
-    print("Nama:", currentTarget.model.Name)
-    print("Health:", health)
-    print("MaxHealth:", maxHealth)
-    print("Sisa HP:", health, "/", maxHealth)
-    
-    -- Cek apakah bisa di-set ke 0
-    local bisaSetKe0 = pcall(function()
-        currentTarget.humanoid.Health = 0
-        return currentTarget.humanoid.Health == 0
-    end)
-    
-    if bisaSetKe0 then
-        print("✅ Bisa di-set ke 0 (seharusnya mati)")
-    else
-        print("❌ TIDAK bisa di-set ke 0 (ada perlindungan)")
-    end
-    
-    -- Cek apakah ada TakeDamage method
-    if currentTarget.humanoid.TakeDamage then
-        print("✅ Memiliki method TakeDamage")
-    else
-        print("❌ Tidak memiliki TakeDamage")
-    end
-    
-    -- Cari remote event attack
-    local remotesDitemukan = 0
-    for _, remote in ipairs(game:GetService("ReplicatedStorage"):GetChildren()) do
-        if remote:IsA("RemoteEvent") and remote.Name:lower():find("attack") then
-            remotesDitemukan = remotesDitemukan + 1
-        end
-    end
-    print("Remote attack ditemukan:", remotesDitemukan)
-    print("=================================")
+    lastKillTime = currentTime
 end
 
 -- FUNGSI: Teleport ke BELAKANG mob
@@ -1530,6 +1536,7 @@ print("⌨️ Keyboard Shortcut:")
 print("F = Toggle Floating Mode")
 print("G = Toggle Kill Aura")
 print("=================================")
+
 
 
 
