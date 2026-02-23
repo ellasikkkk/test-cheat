@@ -1,5 +1,5 @@
 -- Script Utama RPG Grinder - FLOATING MODE + GUI LENGKAP
--- FIX: Memperbaiki error "attempt to call a nil value"
+-- Dengan slider radius dan filter nama mob
 
 local player = game.Players.LocalPlayer
 local userInputService = game:GetService("UserInputService")
@@ -11,6 +11,8 @@ local tweenService = game:GetService("TweenService")
 local floatingActive = false
 local currentTarget = nil
 local floatDistance = 5
+local searchRadius = 50  -- Radius pencarian default
+local targetMobName = ""  -- Filter nama mob (kosong = semua mob)
 local character = nil
 local humanoidRootPart = nil
 
@@ -24,10 +26,10 @@ local SEARCH_DELAY_IDLE = 5
 local MAX_NO_MOB_COUNT = 5
 
 -- VARIABEL GUI
-local updateGUIFunc = nil  -- Akan diisi nanti
+local updateGUIFunc = nil
 
 -- =============================================
--- FUNGSI-FUNGSI UTAMA (DIDEFINISIKAN DULU)
+-- FUNGSI-FUNGSI UTAMA
 -- =============================================
 
 -- FUNGSI: Update referensi karakter
@@ -53,21 +55,27 @@ local function waitForCharacter()
     return true
 end
 
--- FUNGSI: Mendapatkan mob terdekat
-local function getNearestMob(range)
+-- FUNGSI: Cek apakah mob sesuai filter nama
+local function isMobNameMatch(mobName)
+    if targetMobName == "" then return true end  -- Filter kosong = semua mob
+    
+    -- Case-insensitive comparison
+    return string.lower(mobName):find(string.lower(targetMobName)) ~= nil
+end
+
+-- FUNGSI: Mendapatkan mob terdekat (dengan filter nama)
+local function getNearestMob()
     if not humanoidRootPart then return nil end
     
     local nearestMob = nil
-    local shortestDistance = range or math.huge
+    local shortestDistance = math.huge
     local playerPos = humanoidRootPart.Position
     
-    local searchRange = (range or 50) * 1.5
     local region = Region3.new(
-        playerPos - Vector3.new(searchRange, searchRange, searchRange),
-        playerPos + Vector3.new(searchRange, searchRange, searchRange)
+        playerPos - Vector3.new(searchRadius, searchRadius, searchRadius),
+        playerPos + Vector3.new(searchRadius, searchRadius, searchRadius)
     )
     
-    -- Protect from errors
     local parts = {}
     pcall(function()
         parts = workspace:FindPartsInRegion3(region, nil, 100)
@@ -76,12 +84,18 @@ local function getNearestMob(range)
     for _, part in ipairs(parts) do
         local obj = part.Parent
         if obj and obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
+            
+            -- CEK FILTER NAMA
+            if not isMobNameMatch(obj.Name) then
+                continue  -- Skip mob yang tidak sesuai filter
+            end
+            
             local mobRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
             if mobRoot then
                 local humanoid = obj:FindFirstChild("Humanoid")
                 if humanoid and humanoid.Health > 0 then
                     local distance = (playerPos - mobRoot.Position).Magnitude
-                    if distance < shortestDistance and distance <= (range or 50) then
+                    if distance < shortestDistance then
                         shortestDistance = distance
                         nearestMob = {
                             model = obj,
@@ -110,10 +124,6 @@ local function floatBehindMob(mob)
         local lookAtMob = CFrame.lookAt(behindPosition, mobPosition)
         humanoidRootPart.CFrame = lookAtMob
     end)
-    
-    if not success then
-        print("⚠️ Error saat teleport:", result)
-    end
 end
 
 -- FUNGSI: Cek apakah mob masih hidup
@@ -127,12 +137,11 @@ local function isMobAlive(mob)
     end)
     
     if not success or health <= 0 then return false end
-    
     if not mob.rootPart or not mob.rootPart.Parent then return false end
     return true
 end
 
--- FUNGSI: Cari target baru (DENGAN ANTI-LAG)
+-- FUNGSI: Cari target baru (dengan filter nama)
 local function findNewTarget()
     if not humanoidRootPart then 
         return 
@@ -143,13 +152,17 @@ local function findNewTarget()
         return
     end
     
-    local mob = getNearestMob(getgenv().TeleportRange or 50)
+    local mob = getNearestMob()
     
     if mob then
         noMobCount = 0
         searchCooldown = SEARCH_DELAY_NORMAL
         currentTarget = mob
         floatBehindMob(currentTarget)
+        
+        -- Tampilkan info target
+        local filterInfo = (targetMobName ~= "") and (" (filter: " .. targetMobName .. ")") or ""
+        print("✅ Target baru:", currentTarget.model.Name, "| HP:", math.floor(currentTarget.humanoid.Health), filterInfo)
     else
         noMobCount = noMobCount + 1
         
@@ -174,11 +187,11 @@ local function resetPosition()
 end
 
 -- =============================================
--- MEMBUAT GUI (SETELAH FUNGSI-FUNGSI DIDEKLARASIKAN)
+-- MEMBUAT GUI LENGKAP
 -- =============================================
 
 local function createGUI()
-    -- Hapus GUI lama jika ada
+    -- Hapus GUI lama
     pcall(function()
         for _, gui in pairs(player.PlayerGui:GetChildren()) do
             if gui.Name == "FloatingModeGUI" then
@@ -194,11 +207,11 @@ local function createGUI()
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.Parent = player.PlayerGui
     
-    -- Frame utama (background)
+    -- Frame utama
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 300, 0, 400)
-    mainFrame.Position = UDim2.new(0, 20, 0.5, -200)
+    mainFrame.Size = UDim2.new(0, 350, 0, 550)  -- Lebih besar untuk fitur baru
+    mainFrame.Position = UDim2.new(0, 20, 0.5, -275)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
     mainFrame.BackgroundTransparency = 0.1
     mainFrame.BorderSizePixel = 0
@@ -206,7 +219,7 @@ local function createGUI()
     mainFrame.Draggable = true
     mainFrame.Parent = screenGui
     
-    -- Judul GUI
+    -- Judul
     local titleBar = Instance.new("Frame")
     titleBar.Size = UDim2.new(1, 0, 0, 35)
     titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
@@ -239,19 +252,21 @@ local function createGUI()
         screenGui:Destroy()
     end)
     
-    -- Konten GUI
+    -- Konten GUI (scrollable)
     local contentFrame = Instance.new("ScrollingFrame")
     contentFrame.Size = UDim2.new(1, -20, 1, -50)
     contentFrame.Position = UDim2.new(0, 10, 0, 45)
     contentFrame.BackgroundTransparency = 1
     contentFrame.BorderSizePixel = 0
     contentFrame.ScrollBarThickness = 6
-    contentFrame.CanvasSize = UDim2.new(0, 0, 0, 350)
+    contentFrame.CanvasSize = UDim2.new(0, 0, 0, 650)
     contentFrame.Parent = mainFrame
     
     local yPos = 5
     
+    -- =========================================
     -- SECTION: STATUS
+    -- =========================================
     local statusLabel = Instance.new("TextLabel")
     statusLabel.Size = UDim2.new(1, 0, 0, 25)
     statusLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -294,7 +309,7 @@ local function createGUI()
     statusValue.TextSize = 14
     statusValue.Parent = statusFrame
     
-    -- Tombol Toggle ON/OFF
+    -- Tombol Toggle
     local toggleBtn = Instance.new("TextButton")
     toggleBtn.Size = UDim2.new(1, -20, 0, 35)
     toggleBtn.Position = UDim2.new(0, 10, 0, yPos + 45)
@@ -306,7 +321,69 @@ local function createGUI()
     toggleBtn.Parent = contentFrame
     yPos = yPos + 90
     
+    -- =========================================
+    -- SECTION: FILTER NAMA MOB (FITUR BARU)
+    -- =========================================
+    local filterLabel = Instance.new("TextLabel")
+    filterLabel.Size = UDim2.new(1, 0, 0, 25)
+    filterLabel.Position = UDim2.new(0, 0, 0, yPos)
+    filterLabel.BackgroundTransparency = 1
+    filterLabel.Text = "🎯 FILTER NAMA MOB"
+    filterLabel.TextColor3 = Color3.fromRGB(255, 150, 100)
+    filterLabel.TextXAlignment = Enum.TextXAlignment.Left
+    filterLabel.Font = Enum.Font.GothamBold
+    filterLabel.TextSize = 14
+    filterLabel.Parent = contentFrame
+    yPos = yPos + 30
+    
+    local filterFrame = Instance.new("Frame")
+    filterFrame.Size = UDim2.new(1, 0, 0, 70)
+    filterFrame.Position = UDim2.new(0, 0, 0, yPos)
+    filterFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    filterFrame.BorderSizePixel = 0
+    filterFrame.Parent = contentFrame
+    
+    local filterDesc = Instance.new("TextLabel")
+    filterDesc.Size = UDim2.new(1, -20, 0, 20)
+    filterDesc.Position = UDim2.new(0, 10, 0, 5)
+    filterDesc.BackgroundTransparency = 1
+    filterDesc.Text = "Nama mob (kosongkan untuk semua):"
+    filterDesc.TextColor3 = Color3.fromRGB(200, 200, 200)
+    filterDesc.TextXAlignment = Enum.TextXAlignment.Left
+    filterDesc.Font = Enum.Font.Gotham
+    filterDesc.TextSize = 12
+    filterDesc.Parent = filterFrame
+    
+    -- TextBox untuk input nama mob
+    local nameInput = Instance.new("TextBox")
+    nameInput.Size = UDim2.new(1, -30, 0, 30)
+    nameInput.Position = UDim2.new(0, 15, 0, 30)
+    nameInput.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    nameInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameInput.PlaceholderText = "Contoh: Slime, Goblin, Boss"
+    nameInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+    nameInput.Text = targetMobName
+    nameInput.Font = Enum.Font.Gotham
+    nameInput.TextSize = 14
+    nameInput.ClearTextOnFocus = false
+    nameInput.Parent = filterFrame
+    
+    -- Tombol Apply Filter
+    local applyFilterBtn = Instance.new("TextButton")
+    applyFilterBtn.Size = UDim2.new(1, -30, 0, 25)
+    applyFilterBtn.Position = UDim2.new(0, 15, 0, 65)
+    applyFilterBtn.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+    applyFilterBtn.Text = "TERAPKAN FILTER"
+    applyFilterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    applyFilterBtn.Font = Enum.Font.GothamBold
+    applyFilterBtn.TextSize = 12
+    applyFilterBtn.Parent = filterFrame
+    
+    yPos = yPos + 80
+    
+    -- =========================================
     -- SECTION: TARGET INFO
+    -- =========================================
     local targetLabel = Instance.new("TextLabel")
     targetLabel.Size = UDim2.new(1, 0, 0, 25)
     targetLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -320,7 +397,7 @@ local function createGUI()
     yPos = yPos + 30
     
     local targetFrame = Instance.new("Frame")
-    targetFrame.Size = UDim2.new(1, 0, 0, 60)
+    targetFrame.Size = UDim2.new(1, 0, 0, 80)
     targetFrame.Position = UDim2.new(0, 0, 0, yPos)
     targetFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
     targetFrame.BorderSizePixel = 0
@@ -333,8 +410,8 @@ local function createGUI()
     targetNameLabel.Text = "Target: -"
     targetNameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     targetNameLabel.TextXAlignment = Enum.TextXAlignment.Left
-    targetNameLabel.Font = Enum.Font.Gotham
-    targetNameLabel.TextSize = 13
+    targetNameLabel.Font = Enum.Font.GothamBold
+    targetNameLabel.TextSize = 14
     targetNameLabel.Parent = targetFrame
     
     local targetHPLabel = Instance.new("TextLabel")
@@ -358,9 +435,20 @@ local function createGUI()
     targetDistLabel.Font = Enum.Font.Gotham
     targetDistLabel.TextSize = 13
     targetDistLabel.Parent = targetFrame
-    yPos = yPos + 70
     
-    -- Tombol Cari Target Manual
+    local filterInfoLabel = Instance.new("TextLabel")
+    filterInfoLabel.Size = UDim2.new(1, -20, 0, 20)
+    filterInfoLabel.Position = UDim2.new(0, 10, 0, 65)
+    filterInfoLabel.BackgroundTransparency = 1
+    filterInfoLabel.Text = "Filter: Semua mob"
+    filterInfoLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    filterInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+    filterInfoLabel.Font = Enum.Font.Gotham
+    filterInfoLabel.TextSize = 12
+    filterInfoLabel.Parent = targetFrame
+    yPos = yPos + 90
+    
+    -- Tombol Aksi
     local searchBtn = Instance.new("TextButton")
     searchBtn.Size = UDim2.new(0.5, -15, 0, 35)
     searchBtn.Position = UDim2.new(0, 0, 0, yPos)
@@ -371,7 +459,6 @@ local function createGUI()
     searchBtn.TextSize = 12
     searchBtn.Parent = contentFrame
     
-    -- Tombol Reset/Turun
     local resetBtn = Instance.new("TextButton")
     resetBtn.Size = UDim2.new(0.5, -15, 0, 35)
     resetBtn.Position = UDim2.new(0.5, 5, 0, yPos)
@@ -383,12 +470,14 @@ local function createGUI()
     resetBtn.Parent = contentFrame
     yPos = yPos + 45
     
-    -- SECTION: PENGATURAN
+    -- =========================================
+    -- SECTION: PENGATURAN JARAK
+    -- =========================================
     local settingLabel = Instance.new("TextLabel")
     settingLabel.Size = UDim2.new(1, 0, 0, 25)
     settingLabel.Position = UDim2.new(0, 0, 0, yPos)
     settingLabel.BackgroundTransparency = 1
-    settingLabel.Text = "⚙️ PENGATURAN"
+    settingLabel.Text = "⚙️ PENGATURAN JARAK"
     settingLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
     settingLabel.TextXAlignment = Enum.TextXAlignment.Left
     settingLabel.Font = Enum.Font.GothamBold
@@ -396,7 +485,7 @@ local function createGUI()
     settingLabel.Parent = contentFrame
     yPos = yPos + 30
     
-    -- Slider Jarak
+    -- Slider Jarak Belakang
     local distanceFrame = Instance.new("Frame")
     distanceFrame.Size = UDim2.new(1, 0, 0, 50)
     distanceFrame.Position = UDim2.new(0, 0, 0, yPos)
@@ -448,7 +537,75 @@ local function createGUI()
     sliderButton.Parent = sliderBg
     yPos = yPos + 60
     
+    -- =========================================
+    -- SECTION: RADIUS PENCARIAN (FITUR BARU)
+    -- =========================================
+    local radiusLabel = Instance.new("TextLabel")
+    radiusLabel.Size = UDim2.new(1, 0, 0, 25)
+    radiusLabel.Position = UDim2.new(0, 0, 0, yPos)
+    radiusLabel.BackgroundTransparency = 1
+    radiusLabel.Text = "📡 RADIUS PENCARIAN"
+    radiusLabel.TextColor3 = Color3.fromRGB(100, 255, 200)
+    radiusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    radiusLabel.Font = Enum.Font.GothamBold
+    radiusLabel.TextSize = 14
+    radiusLabel.Parent = contentFrame
+    yPos = yPos + 30
+    
+    local radiusFrame = Instance.new("Frame")
+    radiusFrame.Size = UDim2.new(1, 0, 0, 50)
+    radiusFrame.Position = UDim2.new(0, 0, 0, yPos)
+    radiusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    radiusFrame.BorderSizePixel = 0
+    radiusFrame.Parent = contentFrame
+    
+    local radiusText = Instance.new("TextLabel")
+    radiusText.Size = UDim2.new(0.4, -5, 0, 25)
+    radiusText.Position = UDim2.new(0, 10, 0, 5)
+    radiusText.BackgroundTransparency = 1
+    radiusText.Text = "Radius:"
+    radiusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    radiusText.TextXAlignment = Enum.TextXAlignment.Left
+    radiusText.Font = Enum.Font.Gotham
+    radiusText.TextSize = 13
+    radiusText.Parent = radiusFrame
+    
+    local radiusValue = Instance.new("TextLabel")
+    radiusValue.Size = UDim2.new(0.2, 0, 0, 25)
+    radiusValue.Position = UDim2.new(0.8, -20, 0, 5)
+    radiusValue.BackgroundTransparency = 1
+    radiusValue.Text = searchRadius .. "m"
+    radiusValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+    radiusValue.TextXAlignment = Enum.TextXAlignment.Right
+    radiusValue.Font = Enum.Font.GothamBold
+    radiusValue.TextSize = 14
+    radiusValue.Parent = radiusFrame
+    
+    local radiusSliderBg = Instance.new("Frame")
+    radiusSliderBg.Size = UDim2.new(0.6, -10, 0, 10)
+    radiusSliderBg.Position = UDim2.new(0.4, 5, 0, 35)
+    radiusSliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    radiusSliderBg.BorderSizePixel = 0
+    radiusSliderBg.Parent = radiusFrame
+    
+    local radiusSliderFill = Instance.new("Frame")
+    radiusSliderFill.Size = UDim2.new((searchRadius - 20) / 80, 0, 1, 0)  -- Range 20-100
+    radiusSliderFill.BackgroundColor3 = Color3.fromRGB(255, 150, 100)
+    radiusSliderFill.BorderSizePixel = 0
+    radiusSliderFill.Parent = radiusSliderBg
+    
+    local radiusSliderButton = Instance.new("TextButton")
+    radiusSliderButton.Size = UDim2.new(0, 20, 0, 20)
+    radiusSliderButton.Position = UDim2.new((searchRadius - 20) / 80, -10, 0.5, -10)
+    radiusSliderButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    radiusSliderButton.Text = ""
+    radiusSliderButton.BorderSizePixel = 0
+    radiusSliderButton.Parent = radiusSliderBg
+    yPos = yPos + 60
+    
+    -- =========================================
     -- SECTION: ANTI-LAG INFO
+    -- =========================================
     local antiLagLabel = Instance.new("TextLabel")
     antiLagLabel.Size = UDim2.new(1, 0, 0, 25)
     antiLagLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -494,7 +651,7 @@ local function createGUI()
     contentFrame.CanvasSize = UDim2.new(0, 0, 0, yPos + 10)
     
     -- =========================================
-    -- FUNGSI UPDATE GUI (didefinisikan di sini)
+    -- FUNGSI UPDATE GUI
     -- =========================================
     local function updateGUI()
         -- Update status
@@ -510,7 +667,7 @@ local function createGUI()
             toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
         end
         
-        -- Update target info (dengan pcall untuk safety)
+        -- Update target info
         pcall(function()
             if floatingActive and currentTarget and isMobAlive(currentTarget) and humanoidRootPart then
                 targetNameLabel.Text = "Target: " .. tostring(currentTarget.model.Name)
@@ -524,11 +681,24 @@ local function createGUI()
             end
         end)
         
-        -- Update jarak
+        -- Update filter info
+        if targetMobName == "" then
+            filterInfoLabel.Text = "Filter: Semua mob"
+        else
+            filterInfoLabel.Text = "Filter: " .. targetMobName
+        end
+        
+        -- Update jarak belakang
         distanceValue.Text = floatDistance .. "m"
         local fillPercent = (floatDistance - 2) / 13
         sliderFill.Size = UDim2.new(fillPercent, 0, 1, 0)
         sliderButton.Position = UDim2.new(fillPercent, -10, 0.5, -10)
+        
+        -- Update radius
+        radiusValue.Text = searchRadius .. "m"
+        local radiusPercent = (searchRadius - 20) / 80
+        radiusSliderFill.Size = UDim2.new(radiusPercent, 0, 1, 0)
+        radiusSliderButton.Position = UDim2.new(radiusPercent, -10, 0.5, -10)
         
         -- Update anti-lag info
         noMobText.Text = "Pencarian Gagal: " .. noMobCount .. "x"
@@ -536,7 +706,7 @@ local function createGUI()
     end
     
     -- =========================================
-    -- EVENT HANDLER UNTUK GUI
+    -- EVENT HANDLER
     -- =========================================
     
     -- Tombol Toggle
@@ -558,6 +728,24 @@ local function createGUI()
                 print("💤 FLOATING MODE: DIMATIKAN (via GUI)")
                 resetPosition()
                 currentTarget = nil
+            end
+            
+            updateGUI()
+        end)
+    end)
+    
+    -- Tombol Apply Filter
+    applyFilterBtn.MouseButton1Click:Connect(function()
+        pcall(function()
+            targetMobName = nameInput.Text
+            print("🎯 Filter nama mob:", targetMobName == "" and "Semua mob" or targetMobName)
+            
+            -- Reset target dan cari ulang dengan filter baru
+            if floatingActive then
+                currentTarget = nil
+                noMobCount = 0
+                lastSearchTime = 0
+                findNewTarget()
             end
             
             updateGUI()
@@ -593,16 +781,24 @@ local function createGUI()
         end)
     end)
     
-    -- Slider drag functionality
+    -- Slider jarak belakang
     local dragging = false
     
     sliderButton.MouseButton1Down:Connect(function()
         dragging = true
     end)
     
+    -- Slider radius
+    local radiusDragging = false
+    
+    radiusSliderButton.MouseButton1Down:Connect(function()
+        radiusDragging = true
+    end)
+    
     userInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = false
+            radiusDragging = false
         end
     end)
     
@@ -622,6 +818,31 @@ local function createGUI()
                     
                     if floatingActive and currentTarget then
                         floatBehindMob(currentTarget)
+                    end
+                    
+                    updateGUI()
+                end
+            end
+            
+            if radiusDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                local mousePos = userInputService:GetMouseLocation()
+                local sliderPos = radiusSliderBg.AbsolutePosition
+                local sliderSize = radiusSliderBg.AbsoluteSize.X
+                
+                if sliderSize > 0 then
+                    local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
+                    local percent = relativeX / sliderSize
+                    
+                    searchRadius = math.floor(20 + (percent * 80))
+                    searchRadius = math.clamp(searchRadius, 20, 100)
+                    
+                    print("📡 Radius pencarian:", searchRadius)
+                    
+                    -- Reset target dan cari ulang dengan radius baru
+                    if floatingActive then
+                        currentTarget = nil
+                        lastSearchTime = 0
+                        findNewTarget()
                     end
                     
                     updateGUI()
@@ -718,14 +939,20 @@ end)
 -- Inisialisasi awal
 updateCharacter()
 
--- Buat GUI (SETELAH semua fungsi didefinisikan)
+-- Buat GUI
 updateGUIFunc = createGUI()
 
 print("=================================")
 print("✅ RPG Grinder - FLOATING MODE")
-print("    + GUI LENGKAP (FIX ERROR)")
+print("    + GUI LENGKAP")
 print("=================================")
-print("🎯 Semua fitur bisa diakses via GUI")
-print("🖱️ Klik dan drag untuk atur jarak")
-print("📊 Status real-time ditampilkan")
+print("🎯 FITUR BARU:")
+print("   • Slider Radius Pencarian")
+print("   • Filter Nama Mob")
+print("=================================")
+print("🖱️ Cara Penggunaan:")
+print("1. Isi nama mob (kosongkan untuk semua)")
+print("2. Klik TERAPKAN FILTER")
+print("3. Klik AKTIFKAN untuk mulai")
+print("4. Atur radius dengan slider")
 print("=================================")
