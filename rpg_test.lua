@@ -13,7 +13,7 @@ local floatingActive = false
 local autoClickActive = false
 local currentTarget = nil
 local floatDistance = 5
-local searchRadius = 999999999999999999999999999999999999999999
+local searchRadius = 999
 local attackRadius = 15
 local targetMobFilters = {}
 local character = nil
@@ -1369,4 +1369,5 @@ print("3. Aktifkan Floating Mode")
 print("4. Aktifkan Auto Click")
 print("5. Script akan klik di TENGAH layar otomatis!")
 print("=================================")
+
 
