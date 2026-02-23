@@ -102,12 +102,32 @@ local function isMobAlive(mob)
     return true
 end
 
--- FUNGSI: Cari target baru
+-- FUNGSI: Cari target baru (dengan anti-lag)
 local function findNewTarget()
     if not humanoidRootPart then 
-        print("❌ Karakter tidak ditemukan")
         return 
     end
+    
+    -- CEK COOLDOWN
+    local currentTime = tick()
+    if currentTime - lastSearchTime < searchCooldown then
+        return  -- Masih dalam cooldown, skip pencarian
+    end
+    
+    print("🔍 Mencari target baru...")
+    local mob, _, mobsFound = getNearestMob(getgenv().TeleportRange or 50)
+    
+    if mob then
+        -- Reset counter karena ada mob
+        noMobCount = 0
+        searchCooldown = 0.5  -- Cooldown normal (0.5 detik)
+        currentTarget = mob
+        floatBehindMob(currentTarget)
+        print("✅ Target baru:", currentTarget.model.Name, 
+              "| HP:", math.floor(currentTarget.humanoid.Health))
+    else
+        -- Tidak ada mob ditemukan
+        noMobCount = noMobCount + 1
     
     print("🔍 Mencari target baru...")
     local mob = getNearestMob(getgenv().TeleportRange or 50)
@@ -286,3 +306,4 @@ print("2. Jika mati, auto respawn dan lanjut")
 print("3. Pindah target hanya saat mob MATI")
 print("4. Atur jarak dengan +/-")
 print("=================================")
+
