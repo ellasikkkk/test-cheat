@@ -1,5 +1,5 @@
--- Script Utama RPG Grinder - FLOATING MODE + AUTO CLICK
--- Auto attack dengan simulasi klik mouse (bukan kill aura)
+-- Script Utama RPG Grinder - FLOATING MODE + AUTO CLICK TENGAH + FILTER NPC
+-- Auto click di TENGAH layar (tidak ikut kursor) + tidak teleport ke NPC
 
 local player = game.Players.LocalPlayer
 local userInputService = game:GetService("UserInputService")
@@ -10,11 +10,11 @@ local tweenService = game:GetService("TweenService")
 
 -- VARIABEL GLOBAL
 local floatingActive = false
-local autoClickActive = false  -- Ganti nama dari autoAttack
+local autoClickActive = false
 local currentTarget = nil
 local floatDistance = 5
 local searchRadius = 50
-local attackRadius = 15  -- Radius untuk mendeteksi apakah target bisa diklik
+local attackRadius = 15
 local targetMobFilters = {}
 local character = nil
 local humanoidRootPart = nil
@@ -22,8 +22,11 @@ local humanoidRootPart = nil
 -- VARIABEL UNTUK AUTO CLICK
 local clickCooldown = 0
 local lastClickTime = 0
-local clickSpeed = 0.2  -- Kecepatan klik (detik)
+local clickSpeed = 0.2
 local isClicking = false
+
+-- VARIABEL UNTUK POSISI CLICK (TENGAH LAYAR)
+local clickPosition = nil
 
 -- VARIABEL ANTI-LAG
 local searchCooldown = 0
@@ -36,6 +39,90 @@ local MAX_NO_MOB_COUNT = 5
 
 -- VARIABEL GUI
 local updateGUIFunc = nil
+
+-- =============================================
+-- FUNGSI DETEKSI NPC (TIDAK AKAN DI-TELEPORT)
+-- =============================================
+
+-- Daftar nama NPC umum (bisa ditambah sendiri)
+local NPC_NAMES = {
+    ["Merchant"] = true, ["Villager"] = true, ["Guard"] = true,
+    ["Shopkeeper"] = true, ["Blacksmith"] = true, ["Trader"] = true,
+    ["Quest Giver"] = true, ["Bartender"] = true, ["Innkeeper"] = true,
+    ["Priest"] = true, ["Wizard"] = true, ["Trainer"] = true,
+    ["Banker"] = true, ["Mayor"] = true, ["King"] = true,
+    ["Queen"] = true, ["Prince"] = true, ["Princess"] = true,
+    ["Guide"] = true, ["Elder"] = true, ["Shaman"] = true,
+    ["Healer"] = true, ["Smith"] = true, ["Farmer"] = true,
+    ["Fisherman"] = true, ["Miner"] = true, ["Hunter"] = true,
+    ["Chef"] = true, ["Baker"] = true, ["Alchemist"] = true,
+    ["Enchanter"] = true, ["Armorer"] = true, ["Weaponsmith"] = true,
+    ["Jeweler"] = true, ["Tailor"] = true, ["Leatherworker"] = true,
+    ["Carpenter"] = true, ["Stable Master"] = true, ["Flight Master"] = true,
+    ["Auctioneer"] = true, ["Postman"] = true, ["Guardian"] = true,
+    ["Sentinel"] = true, ["Watchman"] = true, ["Patrol"] = true,
+    ["Recruiter"] = true, ["Advisor"] = true, ["Councilor"] = true,
+    ["Diplomat"] = true, ["Ambassador"] = true, ["Herald"] = true,
+    ["Scribe"] = true, ["Librarian"] = true, ["Scholar"] = true,
+    ["Teacher"] = true, ["Mentor"] = true, ["Apprentice"] = true,
+    ["Student"] = true, ["Novice"] = true, ["Initiate"] = true,
+    ["Acolyte"] = true, ["Disciple"] = true, ["Follower"] = true,
+    ["Convert"] = true, ["Believer"] = true, ["Worshipper"] = true,
+    ["Cultist"] = true, ["Fanatic"] = true, ["Zealot"] = true,
+    ["Missionary"] = true, ["Preacher"] = true, ["Prophet"] = true,
+    ["Oracle"] = true, ["Seer"] = true, ["Fortune Teller"] = true,
+    ["Soothsayer"] = true, ["Diviner"] = true, ["Astrologer"] = true,
+    ["Numerologist"] = true, ["Palm Reader"] = true, ["Tarot Reader"] = true,
+    ["Medium"] = true, ["Channeler"] = true, ["Psychic"] = true,
+    ["Telepath"] = true, ["Empath"] = true, ["Sensitive"] = true,
+    ["Clairvoyant"] = true, ["Precognitive"] = true, ["Retrocognitive"] = true,
+    ["Telekinetic"] = true, ["Pyrokinetic"] = true, ["Cryokinetic"] = true,
+    ["Hydrokinetic"] = true, ["Geokinetic"] = true, ["Aerokinetic"] = true,
+    ["Electrokinetic"] = true, ["Biokinetic"] = true, ["Chronokinetic"] = true,
+    ["Spatiokinetic"] = true, ["Gravikinetic"] = true, ["Magnetokinetic"] = true,
+    ["Photokinetic"] = true, ["Umbrakinetic"] = true, ["Vitakinetic"] = true,
+    ["Necrokinetic"] = true, ["Hemokinetic"] = true, ["Toxikinetic"] = true,
+    ["Ferrokinetic"] = true, ["Crystallokinetic"] = true, ["Plantkinetic"] = true,
+    ["Animalkinetic"] = true, ["Insectkinetic"] = true, ["Fungikinetic"] = true
+}
+
+-- FUNGSI: Dapatkan posisi tengah layar
+local function getScreenCenter()
+    local viewportSize = workspace.CurrentCamera.ViewportSize
+    return Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+end
+
+-- FUNGSI: Cek apakah ini NPC (bukan mob)
+local function isNPC(obj)
+    if not obj then return false end
+    
+    -- Cek berdasarkan nama
+    local objName = obj.Name
+    if NPC_NAMES[objName] then
+        return true
+    end
+    
+    -- Cek apakah memiliki Health yang tidak berubah (NPC biasanya HP tetap)
+    local humanoid = obj:FindFirstChild("Humanoid")
+    if humanoid then
+        -- NPC biasanya tidak memiliki MaxHealth atau Health tidak berkurang
+        if humanoid.MaxHealth == 0 or humanoid.Health == 0 then
+            return true
+        end
+    end
+    
+    -- Cek berdasarkan attribute khusus
+    if obj:GetAttribute("NPC") or obj:GetAttribute("IsNPC") then
+        return true
+    end
+    
+    -- Cek berdasarkan parent (NPC biasanya di folder "NPCs")
+    if obj.Parent and obj.Parent.Name:lower():find("npc") then
+        return true
+    end
+    
+    return false
+end
 
 -- =============================================
 -- FUNGSI-FUNGSI UTAMA
@@ -91,7 +178,7 @@ local function isMobNameMatch(mobName)
     return false
 end
 
--- FUNGSI: Mendapatkan mob terdekat
+-- FUNGSI: Mendapatkan mob terdekat (DENGAN FILTER NPC)
 local function getNearestMob()
     if not humanoidRootPart then return nil end
     
@@ -112,6 +199,11 @@ local function getNearestMob()
     for _, part in ipairs(parts) do
         local obj = part.Parent
         if obj and obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
+            
+            -- CEK APAKAH INI NPC (SKIP jika NPC)
+            if isNPC(obj) then
+                continue
+            end
             
             if not isMobNameMatch(obj.Name) then
                 continue
@@ -149,7 +241,7 @@ local function isTargetInRange()
     return distance <= attackRadius
 end
 
--- FUNGSI: Auto Click - Mensimulasikan klik mouse
+-- FUNGSI: Auto Click di TENGAH LAYAR (tidak ikut kursor)
 local function autoClick()
     if not autoClickActive or not floatingActive then return end
     if not currentTarget then return end
@@ -165,41 +257,22 @@ local function autoClick()
         return
     end
     
-    -- Simulasi klik kiri mouse
-    pcall(function()
-        -- Metode 1: VirtualInputManager (paling mirip klik asli)
-        virtualInputManager:SendMouseButtonEvent(
-            userInputService:GetMouseLocation().X,  -- Posisi X mouse
-            userInputService:GetMouseLocation().Y,  -- Posisi Y mouse
-            0,  -- Tombol kiri (0 = kiri, 1 = kanan, 2 = tengah)
-            true,  -- Down
-            game,  -- Objek
-            0  -- ID
-        )
-        
-        -- Tunggu sebentar
-        wait(0.05)
-        
-        -- Lepas klik
-        virtualInputManager:SendMouseButtonEvent(
-            userInputService:GetMouseLocation().X,
-            userInputService:GetMouseLocation().Y,
-            0,
-            false,  -- Up
-            game,
-            0
-        )
-        
-        print("🖱️ Auto Click ke:", currentTarget.model.Name)
-    end)
+    -- Dapatkan posisi tengah layar
+    local centerPos = getScreenCenter()
     
-    -- Metode 2: Alternative jika VirtualInputManager tidak bekerja
-    -- Ini hanya fallback, menggunakan mekanisme damage langsung
-    -- pcall(function()
-    --     if currentTarget and currentTarget.humanoid then
-    --         currentTarget.humanoid.Health = currentTarget.humanoid.Health - 10
-    --     end
-    -- end)
+    -- Simulasi klik di tengah layar
+    pcall(function()
+        -- Gerakkan mouse ke tengah layar dulu (opsional, bisa di-skip jika ingin langsung klik di posisi mouse)
+        virtualInputManager:SendMouseMoveEvent(centerPos.X, centerPos.Y, game)
+        wait(0.03)
+        
+        -- Klik kiri
+        virtualInputManager:SendMouseButtonEvent(centerPos.X, centerPos.Y, 0, true, game, 0)
+        wait(0.03)
+        virtualInputManager:SendMouseButtonEvent(centerPos.X, centerPos.Y, 0, false, game, 0)
+        
+        print("🖱️ Auto Click (TENGAH) ke:", currentTarget.model.Name)
+    end)
     
     lastClickTime = currentTime
 end
@@ -233,7 +306,7 @@ local function isMobAlive(mob)
     return true
 end
 
--- FUNGSI: Cari target baru
+-- FUNGSI: Cari target baru (DENGAN FILTER NPC)
 local function findNewTarget()
     if not humanoidRootPart then return end
     
@@ -281,9 +354,8 @@ local function resetPosition()
 end
 
 -- =============================================
--- MEMBUAT GUI LENGKAP DENGAN AUTO CLICK
+-- MEMBUAT GUI LENGKAP (SAMA SEPERTI KODE ANDA)
 -- =============================================
-
 local function createGUI()
     -- Hapus GUI lama
     pcall(function()
@@ -887,6 +959,7 @@ local function createGUI()
     
     yPos = yPos + 60
     contentFrame.CanvasSize = UDim2.new(0, 0, 0, yPos + 10)
+
     
     -- =========================================
     -- FUNGSI UPDATE GUI
@@ -1247,7 +1320,7 @@ runService.Heartbeat:Connect(function()
             return
         end
         
-        -- Auto Click (jalan terus kalau aktif)
+        -- Auto Click di TENGAH LAYAR (jalan terus kalau aktif)
         if autoClickActive and floatingActive then
             autoClick()
         end
@@ -1279,21 +1352,20 @@ end)
 -- Inisialisasi awal
 updateCharacter()
 
--- Buat GUI
-updateGUIFunc = createGUI()
+-- Buat GUI (SESUAIKAN DENGAN KODE GUI ANDA)
+ updateGUIFunc = createGUI()  -- UNCOMMENT INI jika sudah menambahkan kode GUI
 
 print("=================================")
-print("✅ RPG Grinder - AUTO CLICK MODE")
+print("✅ RPG Grinder - AUTO CLICK TENGAH + FILTER NPC")
 print("=================================")
-print("🎯 FITUR AUTO CLICK:")
-print("   • Simulasi klik mouse asli")
-print("   • Radius click bisa diatur (5-50)")
-print("   • Kecepatan click bisa diatur")
+print("🎯 FITUR BARU:")
+print("   • Auto Click di TENGAH LAYAR (tidak ikut kursor)")
+print("   • Filter NPC (tidak akan teleport ke NPC)")
 print("=================================")
 print("🖱️ Cara Penggunaan:")
 print("1. Atur radius click (5-50)")
 print("2. Atur kecepatan click")
 print("3. Aktifkan Floating Mode")
 print("4. Aktifkan Auto Click")
-print("5. Script akan klik otomatis!")
+print("5. Script akan klik di TENGAH layar otomatis!")
 print("=================================")
