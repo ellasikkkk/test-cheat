@@ -53,28 +53,7 @@ local function floatAboveMob(mob)
     
     if rotasiMode == 1 then
         -- METODE 1: Rotasi manual sumbu X (paling sederhana)
-        newCFrame = CFrame.new(targetPos) * CFrame.Angles(-1.5708, 0, 0)  -- -90 derajat dalam radian
-        
-    elseif rotasiMode == 2 then
-        -- METODE 2: Menghadap ke bawah dengan orientasi dunia
-        newCFrame = CFrame.fromEulerAnglesXYZ(-1.5708, 0, 0) + targetPos
-        
-    elseif rotasiMode == 3 then
-        -- METODE 3: Menghadap ke arah mob
-        local direction = (mob.rootPart.Position - targetPos).Unit
-        newCFrame = CFrame.lookAt(targetPos, targetPos + direction)
-        -- Tambahkan rotasi menghadap ke bawah
-        newCFrame = newCFrame * CFrame.Angles(-0.5, 0, 0)  -- -30 derajat
-        
-    elseif rotasiMode == 4 then
-        -- METODE 4: Coba dengan Vector3 orientation
-        humanoidRootPart.CFrame = CFrame.new(targetPos)
-        wait(0.05)
-        -- Set orientation langsung
-        humanoidRootPart.Orientation = Vector3.new(-90, 0, 0)
-        print("🔧 Mencoba metode orientation")
-        return
-    end
+        newCFrame = CFrame.new(targetPos) * CFrame.Angles(-1.5708, 0, 0)  -- -90 derajat dalam radia
     
     -- Terapkan CFrame jika bukan metode 4
     if newCFrame then
@@ -217,3 +196,4 @@ print("=================================")
 print("📍 Mode Rotasi awal: 1")
 print("🖱️ Tekan M untuk ganti-ganti mode")
 print("=================================")
+
