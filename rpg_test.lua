@@ -248,31 +248,68 @@ local function getMobsInKillRange()
     return mobsInRange
 end
 
--- FUNGSI: KILL AURA - Langsung kurangi health
+-- FUNGSI: KILL AURA AGGRESIF (Memastikan mob mati)
 local function killAura()
     if not killAuraActive or not floatingActive then return end
     
-    -- Cek cooldown
     local currentTime = tick()
-    if currentTime - lastKillTime < killCooldown then
-        return
-    end
+    if currentTime - lastKillTime < killCooldown then return end
     
-    -- Dapatkan semua mob dalam radius kill
     local mobs = getMobsInKillRange()
     local killedCount = 0
     
     for _, mob in ipairs(mobs) do
         if mob and mob.humanoid and mob.humanoid.Health > 0 then
-            -- Kurangi health
-            local newHealth = mob.humanoid.Health - damageAmount
-            if newHealth <= 0 then
+            
+            -- METODE 1: Paksa health jadi 0 (jika game mengizinkan)
+            local success1 = pcall(function()
                 mob.humanoid.Health = 0
+            end)
+            
+            -- Kalau metode 1 gagal atau health masih >0, coba metode lain
+            if not success1 or mob.humanoid.Health > 0 then
+                
+                -- METODE 2: Kurangi health berulang kali dalam satu tick
+                pcall(function()
+                    for i = 1, 20 do  -- Kurangi 20 kali berturut-turut
+                        mob.humanoid.Health = mob.humanoid.Health - damageAmount
+                        wait()  -- Beri jeda kecil antar damage
+                        if mob.humanoid.Health <= 0 then break end
+                    end
+                end)
+                
+                -- METODE 3: Gunakan :TakeDamage() jika tersedia
+                pcall(function()
+                    if mob.humanoid.TakeDamage then
+                        mob.humanoid:TakeDamage(999999)  -- Damage besar
+                    end
+                end)
+                
+                -- METODE 4: Coba remote event attack (jika ada)
+                pcall(function()
+                    -- Cari remote event di ReplicatedStorage
+                    for _, remote in ipairs(game:GetService("ReplicatedStorage"):GetChildren()) do
+                        if remote:IsA("RemoteEvent") and remote.Name:lower():find("attack") then
+                            remote:FireServer(mob.model)
+                            break
+                        end
+                    end
+                end)
+            end
+            
+            -- Cek apakah mob sudah mati
+            if mob.humanoid.Health <= 0 then
                 killedCount = killedCount + 1
-                print("💀 Mob mati:", mob.model.Name)
+                print("💀 Mob MATI:", mob.model.Name)
+                
+                -- Opsional: Hancurkan model jika perlu
+                -- pcall(function()
+                --     mob.model:BreakJoints()
+                --     wait(0.1)
+                --     mob.model:Destroy()
+                -- end)
             else
-                mob.humanoid.Health = newHealth
-                print("⚔️ Damage:", mob.model.Name, "| HP:", math.floor(newHealth))
+                print("⚔️ Damage:", mob.model.Name, "| HP:", math.floor(mob.humanoid.Health))
             end
         end
     end
@@ -280,6 +317,54 @@ local function killAura()
     if #mobs > 0 then
         lastKillTime = currentTime
     end
+end
+
+-- FUNGSI: DIAGNOSA MOB (Tekan D untuk cek kenapa tidak mati)
+local function diagnoseMobDeath()
+    if not currentTarget or not currentTarget.humanoid then 
+        print("❌ Tidak ada target untuk diagnosa")
+        return 
+    end
+    
+    local health = currentTarget.humanoid.Health
+    local maxHealth = currentTarget.humanoid.MaxHealth
+    
+    print("=================================")
+    print("🔍 DIAGNOSA MOB:")
+    print("=================================")
+    print("Nama:", currentTarget.model.Name)
+    print("Health:", health)
+    print("MaxHealth:", maxHealth)
+    print("Sisa HP:", health, "/", maxHealth)
+    
+    -- Cek apakah bisa di-set ke 0
+    local bisaSetKe0 = pcall(function()
+        currentTarget.humanoid.Health = 0
+        return currentTarget.humanoid.Health == 0
+    end)
+    
+    if bisaSetKe0 then
+        print("✅ Bisa di-set ke 0 (seharusnya mati)")
+    else
+        print("❌ TIDAK bisa di-set ke 0 (ada perlindungan)")
+    end
+    
+    -- Cek apakah ada TakeDamage method
+    if currentTarget.humanoid.TakeDamage then
+        print("✅ Memiliki method TakeDamage")
+    else
+        print("❌ Tidak memiliki TakeDamage")
+    end
+    
+    -- Cari remote event attack
+    local remotesDitemukan = 0
+    for _, remote in ipairs(game:GetService("ReplicatedStorage"):GetChildren()) do
+        if remote:IsA("RemoteEvent") and remote.Name:lower():find("attack") then
+            remotesDitemukan = remotesDitemukan + 1
+        end
+    end
+    print("Remote attack ditemukan:", remotesDitemukan)
+    print("=================================")
 end
 
 -- FUNGSI: Teleport ke BELAKANG mob
@@ -1406,6 +1491,12 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
             if updateGUIFunc then
                 updateGUIFunc()
             end
+        end
+    end)
+end)
+
+ if input.KeyCode == Enum.KeyCode.D then
+            diagnoseMobDeath()
         end
     end)
 end)
