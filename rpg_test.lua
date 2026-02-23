@@ -1,5 +1,6 @@
 -- Script Utama RPG Grinder - FLOATING MODE
 -- Dengan deteksi respawn dan posisi di belakang mob
+-- DILENGKAPI ANTI-LAG SAAT TIDAK ADA MOB
 
 local player = game.Players.LocalPlayer
 local userInputService = game:GetService("UserInputService")
@@ -13,6 +14,15 @@ local floatDistance = 5  -- Jarak di belakang mob (bukan tinggi)
 local character = nil
 local humanoidRootPart = nil
 
+-- === VARIABEL ANTI-LAG === --
+local searchCooldown = 0        -- Cooldown pencarian (detik)
+local noMobCount = 0            -- Counter tidak ada mob
+local lastSearchTime = 0        -- Waktu pencarian terakhir
+local SEARCH_DELAY_NORMAL = 0.5  -- Cari setiap 0.5 detik (ada mob)
+local SEARCH_DELAY_LOW = 2       -- Cari setiap 2 detik (mulai kosong)
+local SEARCH_DELAY_IDLE = 5      -- Cari setiap 5 detik (sangat kosong)
+local MAX_NO_MOB_COUNT = 5       -- Batas sebelum cooldown panjang
+
 -- FUNGSI: Update referensi karakter
 local function updateCharacter()
     character = player.Character
@@ -24,12 +34,6 @@ local function updateCharacter()
     return false
 end
 
-
-if noMobCount >= MAX_NO_MOB_COUNT then
-    searchCooldown = 5  -- Cooldown panjang
-    print("⚠️ Mode hemat energi")
-end
-
 -- FUNGSI: Tunggu karakter respawn
 local function waitForCharacter()
     print("⏳ Menunggu karakter respawn...")
@@ -39,19 +43,33 @@ local function waitForCharacter()
     return true
 end
 
--- FUNGSI: Mendapatkan mob terdekat
+-- FUNGSI: Mendapatkan mob terdekat (VERSI RINGAN)
 local function getNearestMob(range)
     local nearestMob = nil
     local shortestDistance = range or math.huge
+    local playerPos = humanoidRootPart.Position
+    local mobsFound = 0
     
-    for _, obj in pairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
+    -- Batasi pencarian dengan Region3 untuk performa lebih baik
+    local searchRange = (range or 50) * 1.5
+    local region = Region3.new(
+        playerPos - Vector3.new(searchRange, searchRange, searchRange),
+        playerPos + Vector3.new(searchRange, searchRange, searchRange)
+    )
+    
+    -- Gunakan FindPartsInRegion3 yang lebih cepat dari GetDescendants
+    local parts = workspace:FindPartsInRegion3(region, nil, 100)
+    
+    for _, part in ipairs(parts) do
+        local obj = part.Parent
+        if obj and obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
             local mobRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
             if mobRoot then
                 local humanoid = obj:FindFirstChild("Humanoid")
                 if humanoid and humanoid.Health > 0 then
-                    local distance = (humanoidRootPart.Position - mobRoot.Position).Magnitude
-                    if distance < shortestDistance then
+                    mobsFound = mobsFound + 1
+                    local distance = (playerPos - mobRoot.Position).Magnitude
+                    if distance < shortestDistance and distance <= (range or 50) then
                         shortestDistance = distance
                         nearestMob = {
                             model = obj,
@@ -64,7 +82,8 @@ local function getNearestMob(range)
             end
         end
     end
-    return nearestMob, shortestDistance
+    
+    return nearestMob, shortestDistance, mobsFound
 end
 
 -- FUNGSI: Teleport ke BELAKANG mob
@@ -72,20 +91,11 @@ local function floatBehindMob(mob)
     if not mob or not mob.rootPart then return end
     
     -- Hitung posisi di belakang mob
-    -- Menggunakan lookVector untuk menentukan arah hadap mob
     local mobPosition = mob.rootPart.Position
-    local mobDirection = mob.rootPart.CFrame.LookVector  -- Arah hadap mob
-    
-    -- Posisi di belakang mob (berlawanan dengan arah hadap)
+    local mobDirection = mob.rootPart.CFrame.LookVector
     local behindPosition = mobPosition - (mobDirection * floatDistance)
-    
-    -- Tambahkan sedikit ketinggian agar tidak masuk tanah
     behindPosition = behindPosition + Vector3.new(0, 2, 0)
-    
-    -- Buat CFrame menghadap ke mob
     local lookAtMob = CFrame.lookAt(behindPosition, mobPosition)
-    
-    -- Terapkan CFrame
     humanoidRootPart.CFrame = lookAtMob
     
     print("📍 Di belakang:", mob.model.Name, 
@@ -102,51 +112,50 @@ local function isMobAlive(mob)
     return true
 end
 
--- FUNGSI: Cari target baru (dengan anti-lag)
+-- FUNGSI: Cari target baru (DENGAN ANTI-LAG)
 local function findNewTarget()
     if not humanoidRootPart then 
+        print("❌ Karakter tidak ditemukan")
         return 
     end
     
     -- CEK COOLDOWN
     local currentTime = tick()
     if currentTime - lastSearchTime < searchCooldown then
-        return  -- Masih dalam cooldown, skip pencarian
+        return  -- Masih dalam cooldown
     end
     
     print("🔍 Mencari target baru...")
     local mob, _, mobsFound = getNearestMob(getgenv().TeleportRange or 50)
     
     if mob then
-        -- Reset counter karena ada mob
+        -- Reset counter dan cooldown karena ada mob
         noMobCount = 0
-        searchCooldown = 0.5  -- Cooldown normal (0.5 detik)
+        searchCooldown = SEARCH_DELAY_NORMAL
         currentTarget = mob
         floatBehindMob(currentTarget)
         print("✅ Target baru:", currentTarget.model.Name, 
               "| HP:", math.floor(currentTarget.humanoid.Health))
     else
-        -- Tidak ada mob ditemukan
+        -- Tidak ada mob, naikkan counter
         noMobCount = noMobCount + 1
         
-        -- Atur cooldown berdasarkan seberapa sering tidak ada mob
+        -- Atur cooldown berdasarkan frekuensi tidak ada mob
         if noMobCount >= MAX_NO_MOB_COUNT then
-            searchCooldown = 5  -- Cooldown panjang (5 detik)
+            searchCooldown = SEARCH_DELAY_IDLE
             if noMobCount == MAX_NO_MOB_COUNT then
-                print("⚠️ Tidak ada mob dalam waktu lama")
-                print("⏱️ Mode hemat energi: Cari setiap 5 detik")
+                print("⚠️ Area kosong - Mode hemat energi (cari setiap 5 detik)")
             end
         else
-            searchCooldown = 1  -- Cooldown sedang (1 detik)
+            searchCooldown = SEARCH_DELAY_LOW
+            print("❌ Tidak ada mob (", noMobCount, "/", MAX_NO_MOB_COUNT, ")")
         end
         
-        print("❌ Tidak ada mob di sekitar (", noMobCount, "x )")
         currentTarget = nil
     end
     
     lastSearchTime = currentTime
 end
-
 
 -- FUNGSI: Reset posisi
 local function resetPosition()
@@ -162,10 +171,14 @@ player.CharacterAdded:Connect(function(newCharacter)
     character = newCharacter
     humanoidRootPart = character:WaitForChild("HumanoidRootPart")
     
+    -- Reset anti-lag counter
+    noMobCount = 0
+    searchCooldown = SEARCH_DELAY_NORMAL
+    
     -- Jika floating mode aktif, cari target baru
     if floatingActive then
         print("🚀 Floating mode masih aktif, mencari target...")
-        wait(1)  -- Beri waktu karakter stabil
+        wait(1)
         findNewTarget()
     end
 end)
@@ -190,6 +203,11 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
             print("📍 Karakter di BELAKANG mob")
             print("💀 Hanya pindah target saat mob MATI")
             print("🔄 Auto-respawn terdeteksi")
+            print("⚡ Anti-lag: Cooldown pencarian")
+            -- Reset anti-lag
+            noMobCount = 0
+            searchCooldown = SEARCH_DELAY_NORMAL
+            lastSearchTime = 0
             findNewTarget()
         else
             print("=================================")
@@ -200,7 +218,7 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
         end
     end
     
-    -- Tombol H: Cari target baru manual
+    -- Tombol H: Cari target baru manual (reset cooldown)
     if input.KeyCode == Enum.KeyCode[getgenv().TeleportKey or "H"] then
         if not character or not humanoidRootPart then
             print("❌ Karakter tidak ada")
@@ -208,7 +226,10 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
         end
         
         if floatingActive then
-            print("🔄 Mencari target baru secara manual...")
+            print("🔄 Mencari target baru secara MANUAL...")
+            -- Reset cooldown untuk pencarian manual
+            lastSearchTime = 0
+            noMobCount = 0
             findNewTarget()
         end
     end
@@ -224,7 +245,7 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
     end
     
     -- Tombol +/-: Atur jarak di belakang mob
-    if input.KeyCode == Enum.KeyCode.Equals then  -- Tombol +
+    if input.KeyCode == Enum.KeyCode.Equals then
         floatDistance = math.min(floatDistance + 1, 15)
         print("📏 Jarak belakang:", floatDistance, "studs")
         if floatingActive and currentTarget then
@@ -232,7 +253,7 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
         end
     end
     
-    if input.KeyCode == Enum.KeyCode.Minus then  -- Tombol -
+    if input.KeyCode == Enum.KeyCode.Minus then
         floatDistance = math.max(floatDistance - 1, 2)
         print("📏 Jarak belakang:", floatDistance, "studs")
         if floatingActive and currentTarget then
@@ -240,7 +261,7 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
         end
     end
     
-    -- Tombol P: Status
+    -- Tombol P: Status (dengan info anti-lag)
     if input.KeyCode == Enum.KeyCode.P then
         print("=================================")
         print("📊 STATUS FLOATING MODE")
@@ -253,11 +274,22 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
             print("Posisi: Di BELAKANG mob")
             print("Jarak:", floatDistance, "studs")
         end
+        print("---------------------------------")
+        print("📈 ANTI-LAG STATUS:")
+        print("No Mob Counter:", noMobCount, "/", MAX_NO_MOB_COUNT)
+        print("Search Cooldown:", searchCooldown, "detik")
+        if noMobCount >= MAX_NO_MOB_COUNT then
+            print("⚡ Mode: Hemat Energi (cari 5 detik)")
+        elseif noMobCount > 0 then
+            print("⚡ Mode: Cooldown Sedang (cari 2 detik)")
+        else
+            print("⚡ Mode: Normal (cari 0.5 detik)")
+        end
         print("=================================")
     end
 end)
 
--- LOOP UTAMA
+-- LOOP UTAMA (DENGAN ANTI-LAG)
 runService.Heartbeat:Connect(function()
     -- Pastikan karakter ada
     if not character or not humanoidRootPart then
@@ -269,9 +301,9 @@ runService.Heartbeat:Connect(function()
     
     if not floatingActive then return end
     
-    -- Jika tidak ada target, cari target baru
+    -- Jika tidak ada target, cari dengan sistem cooldown
     if not currentTarget then
-        findNewTarget()
+        findNewTarget()  -- Sudah ada cooldown di dalam
         return
     end
     
@@ -279,7 +311,9 @@ runService.Heartbeat:Connect(function()
     if not isMobAlive(currentTarget) then
         print("💀 Target telah MATI! Mencari target baru...")
         currentTarget = nil
-        findNewTarget()
+        -- Reset counter karena ada mob mati
+        noMobCount = 0
+        searchCooldown = SEARCH_DELAY_NORMAL
         return
     end
     
@@ -294,22 +328,22 @@ updateCharacter()
 
 print("=================================")
 print("✅ RPG Grinder - FLOATING MODE")
+print("    + ANTI-LAG SYSTEM")
 print("=================================")
 print("🎯 POSISI: DI BELAKANG MOB")
 print("🔄 FITUR: Auto-respawn detection")
+print("⚡ ANTI-LAG: Cooldown bertingkat")
 print("=================================")
 print("Tombol:")
 print("F = ON/OFF Floating Mode")
-print("H = Cari target baru")
+print("H = Cari target baru (reset cooldown)")
 print("R = Matikan mode")
 print("+ / - = Atur jarak belakang")
-print("P = Tampilkan status")
+print("P = Tampilkan status + info anti-lag")
 print("=================================")
-print("📢 Cara kerja:")
-print("1. Karakter di belakang mob (menghadap mob)")
-print("2. Jika mati, auto respawn dan lanjut")
-print("3. Pindah target hanya saat mob MATI")
-print("4. Atur jarak dengan +/-")
+print("📢 SISTEM ANTI-LAG:")
+print("• Ada mob → Cari setiap 0.5 detik")
+print("• 1-5x tidak ada mob → Cari setiap 2 detik")
+print("• >5x tidak ada mob → Cari setiap 5 detik")
+print("• Tekan H untuk reset counter")
 print("=================================")
-
-
