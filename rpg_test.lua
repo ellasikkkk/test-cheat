@@ -248,177 +248,41 @@ local function getMobsInKillRange()
     return mobsInRange
 end
 
--- FUNGSI: KILL AURA FINAL - KOMBINASI SEMUA METODE
-local function killAura()
+-- FUNGSI: AUTO CLICK EKSTRIM (Loop terus menerus)
+local function autoClickEkstrim()
     if not killAuraActive or not floatingActive then return end
     
-    local currentTime = tick()
-    if currentTime - lastKillTime < killCooldown then return end
+    local virtualInput = game:GetService("VirtualInputManager")
+    local viewport = workspace.CurrentCamera.ViewportSize
+    local center = Vector2.new(viewport.X / 2, viewport.Y / 2)
     
-    local mobs = getMobsInKillRange()
-    
-    for _, mob in ipairs(mobs) do
-        if mob and mob.humanoid and mob.humanoid.Health > 0 then
+    -- Loop tanpa henti selama kill aura aktif
+    while killAuraActive and floatingActive do
+        local mobs = getMobsInKillRange()
+        
+        if #mobs > 0 then
+            -- Arahkan kamera ke mob pertama
+            local mob = mobs[1]
+            workspace.CurrentCamera.CFrame = CFrame.lookAt(
+                workspace.CurrentCamera.CFrame.Position,
+                mob.rootPart.Position
+            )
             
-            -- =============================================
-            -- BAGIAN 1: REMOTE EVENT SPAM
-            -- =============================================
-            pcall(function()
-                -- Scan semua kemungkinan remote
-                local allRemotes = {}
-                
-                -- ReplicatedStorage
-                for _, remote in ipairs(game:GetService("ReplicatedStorage"):GetChildren()) do
-                    if remote:IsA("RemoteEvent") then
-                        table.insert(allRemotes, remote)
-                    end
-                end
-                
-                -- Players
-                for _, remote in ipairs(player.PlayerScripts:GetChildren()) do
-                    if remote:IsA("RemoteEvent") then
-                        table.insert(allRemotes, remote)
-                    end
-                end
-                
-                -- Workspace
-                for _, remote in ipairs(workspace:GetChildren()) do
-                    if remote:IsA("RemoteEvent") then
-                        table.insert(allRemotes, remote)
-                    end
-                end
-                
-                -- Coba semua kombinasi parameter
-                for _, remote in ipairs(allRemotes) do
-                    for _ = 1, 5 do  -- Masing-masing 5 kali
-                        remote:FireServer(mob.model)
-                        remote:FireServer(mob.humanoid)
-                        remote:FireServer(mob.rootPart)
-                        remote:FireServer(mob.model, damageAmount)
-                        remote:FireServer("attack", mob.model)
-                        remote:FireServer(mob.model, mob.humanoid.Health)
-                        wait()
-                    end
-                end
-            end)
+            -- SUPER CLICK 1000 KALI TANPA JEDA
+            for i = 1, 1000 do
+                virtualInput:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+                virtualInput:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+                -- Tanpa wait() = 1000 klik dalam sekejap
+            end
             
-            -- =============================================
-            -- BAGIAN 2: DAMAGE SPAM (1000 KALI)
-            -- =============================================
-            pcall(function()
-                local targetHealth = mob.humanoid.Health
-                for i = 1, 1000 do
-                    -- Kurangi health langsung
-                    mob.humanoid.Health = mob.humanoid.Health - damageAmount
-                    
-                    -- Gunakan TakeDamage jika ada
-                    if mob.humanoid.TakeDamage then
-                        mob.humanoid:TakeDamage(damageAmount * 10)
-                    end
-                    
-                    -- Coba metode lain
-                    mob.humanoid:ChangeState(Enum.HumanoidStateType.Dead)
-                    
-                    wait()
-                    
-                    -- Kalau sudah 0, berhenti
-                    if mob.humanoid.Health <= 0 then
-                        break
-                    end
-                end
-            end)
-
-            -- FUNGSI: DEBUG LENGKAP (Tekan L)
-local function fullDebug()
-    if not currentTarget then
-        print("❌ Tidak ada target")
-        return
-    end
-    
-    print("=================================")
-    print("🔍 DEBUG LENGKAP")
-    print("=================================")
-    print("Nama:", currentTarget.model.Name)
-    print("Health:", currentTarget.humanoid.Health)
-    print("MaxHealth:", currentTarget.humanoid.MaxHealth)
-    print("ClassName:", currentTarget.model.ClassName)
-    print("Parent:", currentTarget.model.Parent.Name)
-    
-    -- Cek semua atribut
-    print("\n📋 ATRIBUT:")
-    for _, attr in ipairs(currentTarget.model:GetAttributes()) do
-        print("  ", attr, "=", currentTarget.model:GetAttribute(attr))
-    end
-    
-    -- Cek semua child
-    print("\n📁 CHILD OBJECTS:")
-    for _, child in ipairs(currentTarget.model:GetChildren()) do
-        print("  ", child.Name, "(", child.ClassName, ")")
-    end
-    
-    -- Cek remote events
-    print("\n📡 REMOTE EVENTS:")
-    local remotes = {}
-    for _, remote in ipairs(game:GetService("ReplicatedStorage"):GetChildren()) do
-        if remote:IsA("RemoteEvent") then
-            table.insert(remotes, remote.Name)
+            wait(0.05)  -- Jeda sebentar biar tidak terlalu berat
+        else
+            wait(0.1)  -- Tidak ada mob, tunggu
         end
+        
+        -- Biarkan loop berjalan terus
+        wait()
     end
-    print("  Ditemukan:", #remotes, "remote")
-    
-    print("=================================")
-end
-
--- TAMBAHKAN KEYBIND (L untuk debug)
-if input.KeyCode == Enum.KeyCode.L then
-    fullDebug()
-end
-            -- =============================================
-            -- BAGIAN 3: SIMULASI KLIK MOUSE (AUTO CLICK)
-            -- =============================================
-            pcall(function()
-                local virtualInput = game:GetService("VirtualInputManager")
-                local viewport = workspace.CurrentCamera.ViewportSize
-                local center = Vector2.new(viewport.X / 2, viewport.Y / 2)
-                
-                -- Arahkan kamera ke mob
-                workspace.CurrentCamera.CFrame = CFrame.lookAt(
-                    workspace.CurrentCamera.CFrame.Position,
-                    mob.rootPart.Position
-                )
-                
-                -- Klik berkali-kali
-                for i = 1, 20 do
-                    virtualInput:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
-                    wait(0.01)
-                    virtualInput:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
-                    wait(0.01)
-                end
-            end)
-            
-            -- =============================================
-            -- BAGIAN 4: BREAK JOINTS (PAKSA HANCUR)
-            -- =============================================
-            pcall(function()
-                mob.model:BreakJoints()
-                wait(0.1)
-                
-                -- Hapus semua part
-                for _, part in ipairs(mob.model:GetChildren()) do
-                    if part:IsA("BasePart") or part:IsA("MeshPart") then
-                        part:Destroy()
-                    end
-                end
-                
-                -- Hapus model
-                mob.model:Destroy()
-            end)
-            
-            print("⚔️ SERANGAN TOTAL ke:", mob.model.Name)
-        end
-    end
-    
-    lastKillTime = currentTime
 end
 
 -- FUNGSI: Teleport ke BELAKANG mob
@@ -1622,6 +1486,7 @@ print("⌨️ Keyboard Shortcut:")
 print("F = Toggle Floating Mode")
 print("G = Toggle Kill Aura")
 print("=================================")
+
 
 
 
