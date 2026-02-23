@@ -248,7 +248,7 @@ local function getMobsInKillRange()
     return mobsInRange
 end
 
--- FUNGSI: KILL AURA DENGAN REMOTE SPAM
+-- FUNGSI: KILL AURA FINAL - KOMBINASI SEMUA METODE
 local function killAura()
     if not killAuraActive or not floatingActive then return end
     
@@ -261,74 +261,160 @@ local function killAura()
         if mob and mob.humanoid and mob.humanoid.Health > 0 then
             
             -- =============================================
-            -- METODE 1: REMOTE EVENT SPAM (PALING EFEKTIF)
+            -- BAGIAN 1: REMOTE EVENT SPAM
             -- =============================================
             pcall(function()
-                -- Cari semua remote di ReplicatedStorage
+                -- Scan semua kemungkinan remote
+                local allRemotes = {}
+                
+                -- ReplicatedStorage
                 for _, remote in ipairs(game:GetService("ReplicatedStorage"):GetChildren()) do
                     if remote:IsA("RemoteEvent") then
-                        -- Coba berbagai parameter
+                        table.insert(allRemotes, remote)
+                    end
+                end
+                
+                -- Players
+                for _, remote in ipairs(player.PlayerScripts:GetChildren()) do
+                    if remote:IsA("RemoteEvent") then
+                        table.insert(allRemotes, remote)
+                    end
+                end
+                
+                -- Workspace
+                for _, remote in ipairs(workspace:GetChildren()) do
+                    if remote:IsA("RemoteEvent") then
+                        table.insert(allRemotes, remote)
+                    end
+                end
+                
+                -- Coba semua kombinasi parameter
+                for _, remote in ipairs(allRemotes) do
+                    for _ = 1, 5 do  -- Masing-masing 5 kali
                         remote:FireServer(mob.model)
-                        remote:FireServer(mob.model, mob.humanoid)
+                        remote:FireServer(mob.humanoid)
                         remote:FireServer(mob.rootPart)
                         remote:FireServer(mob.model, damageAmount)
                         remote:FireServer("attack", mob.model)
                         remote:FireServer(mob.model, mob.humanoid.Health)
-                    end
-                end
-                
-                -- Cari remote di Players
-                for _, remote in ipairs(player.PlayerScripts:GetChildren()) do
-                    if remote:IsA("RemoteEvent") then
-                        remote:FireServer(mob.model)
-                    end
-                end
-                
-                -- Cari remote di Workspace
-                for _, remote in ipairs(workspace:GetChildren()) do
-                    if remote:IsA("RemoteEvent") then
-                        remote:FireServer(mob.model)
+                        wait()
                     end
                 end
             end)
             
             -- =============================================
-            -- METODE 2: DAMAGE BERKALI-KALI
+            -- BAGIAN 2: DAMAGE SPAM (1000 KALI)
             -- =============================================
             pcall(function()
-                for i = 1, 100 do  -- Spam 100 kali
+                local targetHealth = mob.humanoid.Health
+                for i = 1, 1000 do
+                    -- Kurangi health langsung
                     mob.humanoid.Health = mob.humanoid.Health - damageAmount
+                    
+                    -- Gunakan TakeDamage jika ada
                     if mob.humanoid.TakeDamage then
                         mob.humanoid:TakeDamage(damageAmount * 10)
                     end
+                    
+                    -- Coba metode lain
+                    mob.humanoid:ChangeState(Enum.HumanoidStateType.Dead)
+                    
                     wait()
+                    
+                    -- Kalau sudah 0, berhenti
+                    if mob.humanoid.Health <= 0 then
+                        break
+                    end
                 end
             end)
-            
+
+            -- FUNGSI: DEBUG LENGKAP (Tekan L)
+local function fullDebug()
+    if not currentTarget then
+        print("❌ Tidak ada target")
+        return
+    end
+    
+    print("=================================")
+    print("🔍 DEBUG LENGKAP")
+    print("=================================")
+    print("Nama:", currentTarget.model.Name)
+    print("Health:", currentTarget.humanoid.Health)
+    print("MaxHealth:", currentTarget.humanoid.MaxHealth)
+    print("ClassName:", currentTarget.model.ClassName)
+    print("Parent:", currentTarget.model.Parent.Name)
+    
+    -- Cek semua atribut
+    print("\n📋 ATRIBUT:")
+    for _, attr in ipairs(currentTarget.model:GetAttributes()) do
+        print("  ", attr, "=", currentTarget.model:GetAttribute(attr))
+    end
+    
+    -- Cek semua child
+    print("\n📁 CHILD OBJECTS:")
+    for _, child in ipairs(currentTarget.model:GetChildren()) do
+        print("  ", child.Name, "(", child.ClassName, ")")
+    end
+    
+    -- Cek remote events
+    print("\n📡 REMOTE EVENTS:")
+    local remotes = {}
+    for _, remote in ipairs(game:GetService("ReplicatedStorage"):GetChildren()) do
+        if remote:IsA("RemoteEvent") then
+            table.insert(remotes, remote.Name)
+        end
+    end
+    print("  Ditemukan:", #remotes, "remote")
+    
+    print("=================================")
+end
+
+-- TAMBAHKAN KEYBIND (L untuk debug)
+if input.KeyCode == Enum.KeyCode.L then
+    fullDebug()
+end
             -- =============================================
-            -- METODE 3: PAKSA HEALTH 0 (100x spam)
+            -- BAGIAN 3: SIMULASI KLIK MOUSE (AUTO CLICK)
             -- =============================================
             pcall(function()
-                for i = 1, 100 do
-                    mob.humanoid.Health = 0
-                    wait()
+                local virtualInput = game:GetService("VirtualInputManager")
+                local viewport = workspace.CurrentCamera.ViewportSize
+                local center = Vector2.new(viewport.X / 2, viewport.Y / 2)
+                
+                -- Arahkan kamera ke mob
+                workspace.CurrentCamera.CFrame = CFrame.lookAt(
+                    workspace.CurrentCamera.CFrame.Position,
+                    mob.rootPart.Position
+                )
+                
+                -- Klik berkali-kali
+                for i = 1, 20 do
+                    virtualInput:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+                    wait(0.01)
+                    virtualInput:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+                    wait(0.01)
                 end
             end)
             
             -- =============================================
-            -- METODE 4: BREAK JOINTS (PAKSA MATI)
+            -- BAGIAN 4: BREAK JOINTS (PAKSA HANCUR)
             -- =============================================
             pcall(function()
                 mob.model:BreakJoints()
                 wait(0.1)
+                
+                -- Hapus semua part
                 for _, part in ipairs(mob.model:GetChildren()) do
-                    if part:IsA("BasePart") then
+                    if part:IsA("BasePart") or part:IsA("MeshPart") then
                         part:Destroy()
                     end
                 end
+                
+                -- Hapus model
+                mob.model:Destroy()
             end)
             
-            print("⚔️ Kill Aura diterapkan ke:", mob.model.Name)
+            print("⚔️ SERANGAN TOTAL ke:", mob.model.Name)
         end
     end
     
@@ -1536,6 +1622,7 @@ print("⌨️ Keyboard Shortcut:")
 print("F = Toggle Floating Mode")
 print("G = Toggle Kill Aura")
 print("=================================")
+
 
 
 
