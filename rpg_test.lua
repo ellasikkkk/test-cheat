@@ -1,32 +1,28 @@
--- Script Utama RPG Grinder - FLOATING MODE + AUTO CLICK TENGAH + FILTER NPC
--- Auto click di TENGAH layar (tidak ikut kursor) + tidak teleport ke NPC
+-- Script Utama RPG Grinder - KILL AURA MODE
+-- Langsung mengurangi health mob dalam radius (tanpa klik)
 
 local player = game.Players.LocalPlayer
 local userInputService = game:GetService("UserInputService")
 local runService = game:GetService("RunService")
 local players = game:GetService("Players")
-local virtualInputManager = game:GetService("VirtualInputManager")
 local tweenService = game:GetService("TweenService")
 
 -- VARIABEL GLOBAL
+local killAuraActive = false  -- Ubah dari autoClickActive
 local floatingActive = false
-local autoClickActive = false
 local currentTarget = nil
 local floatDistance = 5
-local searchRadius = 999
-local attackRadius = 15
+local searchRadius = 50
+local killRadius = 15  -- Radius untuk kill aura
+local damageAmount = 30  -- Jumlah damage per tick
 local targetMobFilters = {}
 local character = nil
 local humanoidRootPart = nil
 
--- VARIABEL UNTUK AUTO CLICK
-local clickCooldown = 0
-local lastClickTime = 0
-local clickSpeed = 0.2
-local isClicking = false
-
--- VARIABEL UNTUK POSISI CLICK (TENGAH LAYAR)
-local clickPosition = nil
+-- VARIABEL UNTUK KILL AURA
+local killCooldown = 0
+local lastKillTime = 0
+local killSpeed = 0.2  -- Kecepatan kill (detik)
 
 -- VARIABEL ANTI-LAG
 local searchCooldown = 0
@@ -41,10 +37,9 @@ local MAX_NO_MOB_COUNT = 5
 local updateGUIFunc = nil
 
 -- =============================================
--- FUNGSI DETEKSI NPC (TIDAK AKAN DI-TELEPORT)
+-- FUNGSI DETEKSI NPC
 -- =============================================
 
--- Daftar nama NPC umum (bisa ditambah sendiri)
 local NPC_NAMES = {
     ["Merchant"] = true, ["Villager"] = true, ["Guard"] = true,
     ["Shopkeeper"] = true, ["Blacksmith"] = true, ["Trader"] = true,
@@ -66,57 +61,29 @@ local NPC_NAMES = {
     ["Scribe"] = true, ["Librarian"] = true, ["Scholar"] = true,
     ["Teacher"] = true, ["Mentor"] = true, ["Apprentice"] = true,
     ["Student"] = true, ["Novice"] = true, ["Initiate"] = true,
-    ["Acolyte"] = true, ["Disciple"] = true, ["Follower"] = true,
-    ["Convert"] = true, ["Believer"] = true, ["Worshipper"] = true,
-    ["Cultist"] = true, ["Fanatic"] = true, ["Zealot"] = true,
-    ["Missionary"] = true, ["Preacher"] = true, ["Prophet"] = true,
-    ["Oracle"] = true, ["Seer"] = true, ["Fortune Teller"] = true,
-    ["Soothsayer"] = true, ["Diviner"] = true, ["Astrologer"] = true,
-    ["Numerologist"] = true, ["Palm Reader"] = true, ["Tarot Reader"] = true,
-    ["Medium"] = true, ["Channeler"] = true, ["Psychic"] = true,
-    ["Telepath"] = true, ["Empath"] = true, ["Sensitive"] = true,
-    ["Clairvoyant"] = true, ["Precognitive"] = true, ["Retrocognitive"] = true,
-    ["Telekinetic"] = true, ["Pyrokinetic"] = true, ["Cryokinetic"] = true,
-    ["Hydrokinetic"] = true, ["Geokinetic"] = true, ["Aerokinetic"] = true,
-    ["Electrokinetic"] = true, ["Biokinetic"] = true, ["Chronokinetic"] = true,
-    ["Spatiokinetic"] = true, ["Gravikinetic"] = true, ["Magnetokinetic"] = true,
-    ["Photokinetic"] = true, ["Umbrakinetic"] = true, ["Vitakinetic"] = true,
-    ["Necrokinetic"] = true, ["Hemokinetic"] = true, ["Toxikinetic"] = true,
-    ["Ferrokinetic"] = true, ["Crystallokinetic"] = true, ["Plantkinetic"] = true,
-    ["Animalkinetic"] = true, ["Insectkinetic"] = true, ["Fungikinetic"] = true
+    ["Acolyte"] = true, ["Disciple"] = true, ["Follower"] = true
 }
 
--- FUNGSI: Dapatkan posisi tengah layar
-local function getScreenCenter()
-    local viewportSize = workspace.CurrentCamera.ViewportSize
-    return Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
-end
-
--- FUNGSI: Cek apakah ini NPC (bukan mob)
+-- FUNGSI: Cek apakah ini NPC
 local function isNPC(obj)
     if not obj then return false end
     
-    -- Cek berdasarkan nama
     local objName = obj.Name
     if NPC_NAMES[objName] then
         return true
     end
     
-    -- Cek apakah memiliki Health yang tidak berubah (NPC biasanya HP tetap)
     local humanoid = obj:FindFirstChild("Humanoid")
     if humanoid then
-        -- NPC biasanya tidak memiliki MaxHealth atau Health tidak berkurang
         if humanoid.MaxHealth == 0 or humanoid.Health == 0 then
             return true
         end
     end
     
-    -- Cek berdasarkan attribute khusus
     if obj:GetAttribute("NPC") or obj:GetAttribute("IsNPC") then
         return true
     end
     
-    -- Cek berdasarkan parent (NPC biasanya di folder "NPCs")
     if obj.Parent and obj.Parent.Name:lower():find("npc") then
         return true
     end
@@ -151,7 +118,7 @@ local function waitForCharacter()
     return true
 end
 
--- FUNGSI: Parse string filter menjadi table
+-- FUNGSI: Parse string filter
 local function parseFilters(filterString)
     local filters = {}
     if filterString == "" then return filters end
@@ -178,7 +145,7 @@ local function isMobNameMatch(mobName)
     return false
 end
 
--- FUNGSI: Mendapatkan mob terdekat (DENGAN FILTER NPC)
+-- FUNGSI: Mendapatkan mob terdekat
 local function getNearestMob()
     if not humanoidRootPart then return nil end
     
@@ -200,7 +167,7 @@ local function getNearestMob()
         local obj = part.Parent
         if obj and obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
             
-            -- CEK APAKAH INI NPC (SKIP jika NPC)
+            -- SKIP NPC
             if isNPC(obj) then
                 continue
             end
@@ -231,50 +198,88 @@ local function getNearestMob()
     return nearestMob
 end
 
--- FUNGSI: Cek apakah target dalam jangkauan serangan
-local function isTargetInRange()
-    if not currentTarget or not currentTarget.rootPart or not humanoidRootPart then 
-        return false 
+-- FUNGSI: Mendapatkan semua mob dalam radius kill
+local function getMobsInKillRange()
+    if not humanoidRootPart then return {} end
+    
+    local mobsInRange = {}
+    local playerPos = humanoidRootPart.Position
+    
+    local region = Region3.new(
+        playerPos - Vector3.new(killRadius, killRadius, killRadius),
+        playerPos + Vector3.new(killRadius, killRadius, killRadius)
+    )
+    
+    local parts = {}
+    pcall(function()
+        parts = workspace:FindPartsInRegion3(region, nil, 100)
+    end)
+    
+    for _, part in ipairs(parts) do
+        local obj = part.Parent
+        if obj and obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
+            
+            -- SKIP NPC
+            if isNPC(obj) then
+                continue
+            end
+            
+            if not isMobNameMatch(obj.Name) then
+                continue
+            end
+            
+            local mobRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
+            if mobRoot then
+                local humanoid = obj:FindFirstChild("Humanoid")
+                if humanoid and humanoid.Health > 0 then
+                    local distance = (playerPos - mobRoot.Position).Magnitude
+                    if distance <= killRadius then
+                        table.insert(mobsInRange, {
+                            model = obj,
+                            rootPart = mobRoot,
+                            humanoid = humanoid
+                        })
+                    end
+                end
+            end
+        end
     end
     
-    local distance = (humanoidRootPart.Position - currentTarget.rootPart.Position).Magnitude
-    return distance <= attackRadius
+    return mobsInRange
 end
 
--- FUNGSI: Auto Click di TENGAH LAYAR (tidak ikut kursor)
-local function autoClick()
-    if not autoClickActive or not floatingActive then return end
-    if not currentTarget then return end
+-- FUNGSI: KILL AURA - Langsung kurangi health
+local function killAura()
+    if not killAuraActive or not floatingActive then return end
     
     -- Cek cooldown
     local currentTime = tick()
-    if currentTime - lastClickTime < clickCooldown then
+    if currentTime - lastKillTime < killCooldown then
         return
     end
     
-    -- Cek apakah target dalam jangkauan
-    if not isTargetInRange() then
-        return
+    -- Dapatkan semua mob dalam radius kill
+    local mobs = getMobsInKillRange()
+    local killedCount = 0
+    
+    for _, mob in ipairs(mobs) do
+        if mob and mob.humanoid and mob.humanoid.Health > 0 then
+            -- Kurangi health
+            local newHealth = mob.humanoid.Health - damageAmount
+            if newHealth <= 0 then
+                mob.humanoid.Health = 0
+                killedCount = killedCount + 1
+                print("💀 Mob mati:", mob.model.Name)
+            else
+                mob.humanoid.Health = newHealth
+                print("⚔️ Damage:", mob.model.Name, "| HP:", math.floor(newHealth))
+            end
+        end
     end
     
-    -- Dapatkan posisi tengah layar
-    local centerPos = getScreenCenter()
-    
-    -- Simulasi klik di tengah layar
-    pcall(function()
-        -- Gerakkan mouse ke tengah layar dulu (opsional, bisa di-skip jika ingin langsung klik di posisi mouse)
-        virtualInputManager:SendMouseMoveEvent(centerPos.X, centerPos.Y, game)
-        wait(0.03)
-        
-        -- Klik kiri
-        virtualInputManager:SendMouseButtonEvent(centerPos.X, centerPos.Y, 0, true, game, 0)
-        wait(0.03)
-        virtualInputManager:SendMouseButtonEvent(centerPos.X, centerPos.Y, 0, false, game, 0)
-        
-        print("🖱️ Auto Click (TENGAH) ke:", currentTarget.model.Name)
-    end)
-    
-    lastClickTime = currentTime
+    if #mobs > 0 then
+        lastKillTime = currentTime
+    end
 end
 
 -- FUNGSI: Teleport ke BELAKANG mob
@@ -306,7 +311,7 @@ local function isMobAlive(mob)
     return true
 end
 
--- FUNGSI: Cari target baru (DENGAN FILTER NPC)
+-- FUNGSI: Cari target baru
 local function findNewTarget()
     if not humanoidRootPart then return end
     
@@ -354,13 +359,14 @@ local function resetPosition()
 end
 
 -- =============================================
--- MEMBUAT GUI LENGKAP (SAMA SEPERTI KODE ANDA)
+-- MEMBUAT GUI (DIMODIFIKASI UNTUK KILL AURA)
 -- =============================================
+
 local function createGUI()
     -- Hapus GUI lama
     pcall(function()
         for _, gui in pairs(player.PlayerGui:GetChildren()) do
-            if gui.Name == "FloatingModeGUI" then
+            if gui.Name == "KillAuraGUI" then
                 gui:Destroy()
             end
         end
@@ -368,7 +374,7 @@ local function createGUI()
     
     -- ScreenGui utama
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "FloatingModeGUI"
+    screenGui.Name = "KillAuraGUI"
     screenGui.ResetOnSpawn = false
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.Parent = player.PlayerGui
@@ -376,8 +382,8 @@ local function createGUI()
     -- Frame utama
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 400, 0, 720)
-    mainFrame.Position = UDim2.new(0, 20, 0.5, -360)
+    mainFrame.Size = UDim2.new(0, 400, 0, 700)
+    mainFrame.Position = UDim2.new(0, 20, 0.5, -350)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
     mainFrame.BackgroundTransparency = 0.1
     mainFrame.BorderSizePixel = 0
@@ -396,7 +402,7 @@ local function createGUI()
     titleText.Size = UDim2.new(1, -40, 1, 0)
     titleText.Position = UDim2.new(0, 10, 0, 0)
     titleText.BackgroundTransparency = 1
-    titleText.Text = "⚡ RPG GRINDER - AUTO CLICK"
+    titleText.Text = "⚡ RPG GRINDER - KILL AURA"
     titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleText.TextXAlignment = Enum.TextXAlignment.Left
     titleText.Font = Enum.Font.GothamBold
@@ -418,21 +424,19 @@ local function createGUI()
         screenGui:Destroy()
     end)
     
-    -- Konten GUI (scrollable)
+    -- Konten GUI
     local contentFrame = Instance.new("ScrollingFrame")
     contentFrame.Size = UDim2.new(1, -20, 1, -50)
     contentFrame.Position = UDim2.new(0, 10, 0, 45)
     contentFrame.BackgroundTransparency = 1
     contentFrame.BorderSizePixel = 0
     contentFrame.ScrollBarThickness = 6
-    contentFrame.CanvasSize = UDim2.new(0, 0, 0, 920)
+    contentFrame.CanvasSize = UDim2.new(0, 0, 0, 900)
     contentFrame.Parent = mainFrame
     
     local yPos = 5
     
-    -- =========================================
     -- SECTION: STATUS
-    -- =========================================
     local statusLabel = Instance.new("TextLabel")
     statusLabel.Size = UDim2.new(1, 0, 0, 25)
     statusLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -445,7 +449,7 @@ local function createGUI()
     statusLabel.Parent = contentFrame
     yPos = yPos + 30
     
-    -- Status Floating Mode
+    -- Status Floating
     local statusFrame = Instance.new("Frame")
     statusFrame.Size = UDim2.new(1, 0, 0, 40)
     statusFrame.Position = UDim2.new(0, 0, 0, yPos)
@@ -476,35 +480,35 @@ local function createGUI()
     statusValue.Parent = statusFrame
     yPos = yPos + 45
     
-    -- Status Auto Click
-    local autoClickStatusFrame = Instance.new("Frame")
-    autoClickStatusFrame.Size = UDim2.new(1, 0, 0, 40)
-    autoClickStatusFrame.Position = UDim2.new(0, 0, 0, yPos)
-    autoClickStatusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-    autoClickStatusFrame.BorderSizePixel = 0
-    autoClickStatusFrame.Parent = contentFrame
+    -- Status Kill Aura
+    local killStatusFrame = Instance.new("Frame")
+    killStatusFrame.Size = UDim2.new(1, 0, 0, 40)
+    killStatusFrame.Position = UDim2.new(0, 0, 0, yPos)
+    killStatusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    killStatusFrame.BorderSizePixel = 0
+    killStatusFrame.Parent = contentFrame
     
-    local autoClickText = Instance.new("TextLabel")
-    autoClickText.Size = UDim2.new(0.5, -5, 1, 0)
-    autoClickText.Position = UDim2.new(0, 10, 0, 0)
-    autoClickText.BackgroundTransparency = 1
-    autoClickText.Text = "Auto Click:"
-    autoClickText.TextColor3 = Color3.fromRGB(200, 200, 200)
-    autoClickText.TextXAlignment = Enum.TextXAlignment.Left
-    autoClickText.Font = Enum.Font.Gotham
-    autoClickText.TextSize = 14
-    autoClickText.Parent = autoClickStatusFrame
+    local killStatusText = Instance.new("TextLabel")
+    killStatusText.Size = UDim2.new(0.5, -5, 1, 0)
+    killStatusText.Position = UDim2.new(0, 10, 0, 0)
+    killStatusText.BackgroundTransparency = 1
+    killStatusText.Text = "Kill Aura:"
+    killStatusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    killStatusText.TextXAlignment = Enum.TextXAlignment.Left
+    killStatusText.Font = Enum.Font.Gotham
+    killStatusText.TextSize = 14
+    killStatusText.Parent = killStatusFrame
     
-    local autoClickValue = Instance.new("TextLabel")
-    autoClickValue.Size = UDim2.new(0.5, -5, 1, 0)
-    autoClickValue.Position = UDim2.new(0.5, 5, 0, 0)
-    autoClickValue.BackgroundTransparency = 1
-    autoClickValue.Text = "OFF"
-    autoClickValue.TextColor3 = Color3.fromRGB(255, 100, 100)
-    autoClickValue.TextXAlignment = Enum.TextXAlignment.Right
-    autoClickValue.Font = Enum.Font.GothamBold
-    autoClickValue.TextSize = 14
-    autoClickValue.Parent = autoClickStatusFrame
+    local killStatusValue = Instance.new("TextLabel")
+    killStatusValue.Size = UDim2.new(0.5, -5, 1, 0)
+    killStatusValue.Position = UDim2.new(0.5, 5, 0, 0)
+    killStatusValue.BackgroundTransparency = 1
+    killStatusValue.Text = "OFF"
+    killStatusValue.TextColor3 = Color3.fromRGB(255, 100, 100)
+    killStatusValue.TextXAlignment = Enum.TextXAlignment.Right
+    killStatusValue.Font = Enum.Font.GothamBold
+    killStatusValue.TextSize = 14
+    killStatusValue.Parent = killStatusFrame
     yPos = yPos + 45
     
     -- Tombol Toggle Floating
@@ -519,21 +523,19 @@ local function createGUI()
     toggleFloatBtn.Parent = contentFrame
     yPos = yPos + 40
     
-    -- Tombol Toggle Auto Click
-    local toggleClickBtn = Instance.new("TextButton")
-    toggleClickBtn.Size = UDim2.new(1, -20, 0, 35)
-    toggleClickBtn.Position = UDim2.new(0, 10, 0, yPos)
-    toggleClickBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 100)
-    toggleClickBtn.Text = "🖱️ AKTIFKAN AUTO CLICK"
-    toggleClickBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    toggleClickBtn.Font = Enum.Font.GothamBold
-    toggleClickBtn.TextSize = 14
-    toggleClickBtn.Parent = contentFrame
+    -- Tombol Toggle Kill Aura
+    local toggleKillBtn = Instance.new("TextButton")
+    toggleKillBtn.Size = UDim2.new(1, -20, 0, 35)
+    toggleKillBtn.Position = UDim2.new(0, 10, 0, yPos)
+    toggleKillBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    toggleKillBtn.Text = "⚔️ AKTIFKAN KILL AURA"
+    toggleKillBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleKillBtn.Font = Enum.Font.GothamBold
+    toggleKillBtn.TextSize = 14
+    toggleKillBtn.Parent = contentFrame
     yPos = yPos + 45
     
-    -- =========================================
     -- SECTION: MULTI-FILTER
-    -- =========================================
     local filterLabel = Instance.new("TextLabel")
     filterLabel.Size = UDim2.new(1, 0, 0, 25)
     filterLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -569,7 +571,7 @@ local function createGUI()
     nameInput.Position = UDim2.new(0, 15, 0, 30)
     nameInput.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
     nameInput.TextColor3 = Color3.fromRGB(255, 255, 255)
-    nameInput.PlaceholderText = "Contoh: Slime, Goblin, Boss, Dragon"
+    nameInput.PlaceholderText = "Contoh: Slime, Goblin, Boss"
     nameInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
     nameInput.Text = ""
     nameInput.Font = Enum.Font.Gotham
@@ -598,9 +600,7 @@ local function createGUI()
     resetFilterBtn.Parent = filterFrame
     yPos = yPos + 110
     
-    -- =========================================
     -- SECTION: TARGET INFO
-    -- =========================================
     local targetLabel = Instance.new("TextLabel")
     targetLabel.Size = UDim2.new(1, 0, 0, 25)
     targetLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -688,9 +688,7 @@ local function createGUI()
     resetBtn.Parent = contentFrame
     yPos = yPos + 45
     
-    -- =========================================
-    -- SECTION: PENGATURAN RADIUS DAN KECEPATAN
-    -- =========================================
+    -- SECTION: PENGATURAN
     local settingLabel = Instance.new("TextLabel")
     settingLabel.Size = UDim2.new(1, 0, 0, 25)
     settingLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -755,59 +753,59 @@ local function createGUI()
     searchSliderButton.Parent = searchSliderBg
     yPos = yPos + 60
     
-    -- Slider Radius Auto Click
-    local clickRadiusFrame = Instance.new("Frame")
-    clickRadiusFrame.Size = UDim2.new(1, 0, 0, 50)
-    clickRadiusFrame.Position = UDim2.new(0, 0, 0, yPos)
-    clickRadiusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-    clickRadiusFrame.BorderSizePixel = 0
-    clickRadiusFrame.Parent = contentFrame
+    -- Slider Radius Kill Aura
+    local killRadiusFrame = Instance.new("Frame")
+    killRadiusFrame.Size = UDim2.new(1, 0, 0, 50)
+    killRadiusFrame.Position = UDim2.new(0, 0, 0, yPos)
+    killRadiusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    killRadiusFrame.BorderSizePixel = 0
+    killRadiusFrame.Parent = contentFrame
     
-    local clickRadiusText = Instance.new("TextLabel")
-    clickRadiusText.Size = UDim2.new(0.5, -5, 0, 25)
-    clickRadiusText.Position = UDim2.new(0, 10, 0, 5)
-    clickRadiusText.BackgroundTransparency = 1
-    clickRadiusText.Text = "Radius Auto Click:"
-    clickRadiusText.TextColor3 = Color3.fromRGB(200, 200, 200)
-    clickRadiusText.TextXAlignment = Enum.TextXAlignment.Left
-    clickRadiusText.Font = Enum.Font.Gotham
-    clickRadiusText.TextSize = 13
-    clickRadiusText.Parent = clickRadiusFrame
+    local killRadiusText = Instance.new("TextLabel")
+    killRadiusText.Size = UDim2.new(0.5, -5, 0, 25)
+    killRadiusText.Position = UDim2.new(0, 10, 0, 5)
+    killRadiusText.BackgroundTransparency = 1
+    killRadiusText.Text = "Radius Kill Aura:"
+    killRadiusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    killRadiusText.TextXAlignment = Enum.TextXAlignment.Left
+    killRadiusText.Font = Enum.Font.Gotham
+    killRadiusText.TextSize = 13
+    killRadiusText.Parent = killRadiusFrame
     
-    local clickRadiusValue = Instance.new("TextLabel")
-    clickRadiusValue.Size = UDim2.new(0.2, 0, 0, 25)
-    clickRadiusValue.Position = UDim2.new(0.8, -20, 0, 5)
-    clickRadiusValue.BackgroundTransparency = 1
-    clickRadiusValue.Text = attackRadius .. "m"
-    clickRadiusValue.TextColor3 = Color3.fromRGB(255, 255, 255)
-    clickRadiusValue.TextXAlignment = Enum.TextXAlignment.Right
-    clickRadiusValue.Font = Enum.Font.GothamBold
-    clickRadiusValue.TextSize = 14
-    clickRadiusValue.Parent = clickRadiusFrame
+    local killRadiusValue = Instance.new("TextLabel")
+    killRadiusValue.Size = UDim2.new(0.2, 0, 0, 25)
+    killRadiusValue.Position = UDim2.new(0.8, -20, 0, 5)
+    killRadiusValue.BackgroundTransparency = 1
+    killRadiusValue.Text = killRadius .. "m"
+    killRadiusValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+    killRadiusValue.TextXAlignment = Enum.TextXAlignment.Right
+    killRadiusValue.Font = Enum.Font.GothamBold
+    killRadiusValue.TextSize = 14
+    killRadiusValue.Parent = killRadiusFrame
     
-    local clickSliderBg = Instance.new("Frame")
-    clickSliderBg.Size = UDim2.new(0.6, -10, 0, 10)
-    clickSliderBg.Position = UDim2.new(0.4, 5, 0, 35)
-    clickSliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-    clickSliderBg.BorderSizePixel = 0
-    clickSliderBg.Parent = clickRadiusFrame
+    local killSliderBg = Instance.new("Frame")
+    killSliderBg.Size = UDim2.new(0.6, -10, 0, 10)
+    killSliderBg.Position = UDim2.new(0.4, 5, 0, 35)
+    killSliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    killSliderBg.BorderSizePixel = 0
+    killSliderBg.Parent = killRadiusFrame
     
-    local clickSliderFill = Instance.new("Frame")
-    clickSliderFill.Size = UDim2.new((attackRadius - 5) / 45, 0, 1, 0)
-    clickSliderFill.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
-    clickSliderFill.BorderSizePixel = 0
-    clickSliderFill.Parent = clickSliderBg
+    local killSliderFill = Instance.new("Frame")
+    killSliderFill.Size = UDim2.new((killRadius - 5) / 45, 0, 1, 0)
+    killSliderFill.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+    killSliderFill.BorderSizePixel = 0
+    killSliderFill.Parent = killSliderBg
     
-    local clickSliderButton = Instance.new("TextButton")
-    clickSliderButton.Size = UDim2.new(0, 20, 0, 20)
-    clickSliderButton.Position = UDim2.new((attackRadius - 5) / 45, -10, 0.5, -10)
-    clickSliderButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    clickSliderButton.Text = ""
-    clickSliderButton.BorderSizePixel = 0
-    clickSliderButton.Parent = clickSliderBg
+    local killSliderButton = Instance.new("TextButton")
+    killSliderButton.Size = UDim2.new(0, 20, 0, 20)
+    killSliderButton.Position = UDim2.new((killRadius - 5) / 45, -10, 0.5, -10)
+    killSliderButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    killSliderButton.Text = ""
+    killSliderButton.BorderSizePixel = 0
+    killSliderButton.Parent = killSliderBg
     yPos = yPos + 60
     
-    -- Slider Kecepatan Click
+    -- Slider Kecepatan Kill
     local speedFrame = Instance.new("Frame")
     speedFrame.Size = UDim2.new(1, 0, 0, 50)
     speedFrame.Position = UDim2.new(0, 0, 0, yPos)
@@ -819,7 +817,7 @@ local function createGUI()
     speedText.Size = UDim2.new(0.5, -5, 0, 25)
     speedText.Position = UDim2.new(0, 10, 0, 5)
     speedText.BackgroundTransparency = 1
-    speedText.Text = "Kecepatan Click:"
+    speedText.Text = "Kecepatan Kill:"
     speedText.TextColor3 = Color3.fromRGB(200, 200, 200)
     speedText.TextXAlignment = Enum.TextXAlignment.Left
     speedText.Font = Enum.Font.Gotham
@@ -830,7 +828,7 @@ local function createGUI()
     speedValue.Size = UDim2.new(0.2, 0, 0, 25)
     speedValue.Position = UDim2.new(0.8, -20, 0, 5)
     speedValue.BackgroundTransparency = 1
-    speedValue.Text = string.format("%.1f", clickSpeed) .. "s"
+    speedValue.Text = string.format("%.1f", killSpeed) .. "s"
     speedValue.TextColor3 = Color3.fromRGB(255, 255, 255)
     speedValue.TextXAlignment = Enum.TextXAlignment.Right
     speedValue.Font = Enum.Font.GothamBold
@@ -844,8 +842,7 @@ local function createGUI()
     speedSliderBg.BorderSizePixel = 0
     speedSliderBg.Parent = speedFrame
     
-    -- Speed range: 0.05 - 1.0 detik
-    local speedPercent = (1 - (clickSpeed - 0.05) / 0.95)  -- Invert so left = fast, right = slow
+    local speedPercent = 1 - ((killSpeed - 0.05) / 0.95)
     local speedSliderFill = Instance.new("Frame")
     speedSliderFill.Size = UDim2.new(speedPercent, 0, 1, 0)
     speedSliderFill.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
@@ -913,9 +910,71 @@ local function createGUI()
     distanceSliderButton.Parent = distanceSliderBg
     yPos = yPos + 60
     
-    -- =========================================
+    -- SECTION: DAMAGE SETTINGS
+    local damageLabel = Instance.new("TextLabel")
+    damageLabel.Size = UDim2.new(1, 0, 0, 25)
+    damageLabel.Position = UDim2.new(0, 0, 0, yPos)
+    damageLabel.BackgroundTransparency = 1
+    damageLabel.Text = "💥 DAMAGE SETTINGS"
+    damageLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
+    damageLabel.TextXAlignment = Enum.TextXAlignment.Left
+    damageLabel.Font = Enum.Font.GothamBold
+    damageLabel.TextSize = 14
+    damageLabel.Parent = contentFrame
+    yPos = yPos + 30
+    
+    local damageFrame = Instance.new("Frame")
+    damageFrame.Size = UDim2.new(1, 0, 0, 50)
+    damageFrame.Position = UDim2.new(0, 0, 0, yPos)
+    damageFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    damageFrame.BorderSizePixel = 0
+    damageFrame.Parent = contentFrame
+    
+    local damageText = Instance.new("TextLabel")
+    damageText.Size = UDim2.new(0.5, -5, 0, 25)
+    damageText.Position = UDim2.new(0, 10, 0, 5)
+    damageText.BackgroundTransparency = 1
+    damageText.Text = "Damage per Tick:"
+    damageText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    damageText.TextXAlignment = Enum.TextXAlignment.Left
+    damageText.Font = Enum.Font.Gotham
+    damageText.TextSize = 13
+    damageText.Parent = damageFrame
+    
+    local damageValue = Instance.new("TextLabel")
+    damageValue.Size = UDim2.new(0.2, 0, 0, 25)
+    damageValue.Position = UDim2.new(0.8, -20, 0, 5)
+    damageValue.BackgroundTransparency = 1
+    damageValue.Text = damageAmount
+    damageValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+    damageValue.TextXAlignment = Enum.TextXAlignment.Right
+    damageValue.Font = Enum.Font.GothamBold
+    damageValue.TextSize = 14
+    damageValue.Parent = damageFrame
+    
+    local damageSliderBg = Instance.new("Frame")
+    damageSliderBg.Size = UDim2.new(0.6, -10, 0, 10)
+    damageSliderBg.Position = UDim2.new(0.4, 5, 0, 35)
+    damageSliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    damageSliderBg.BorderSizePixel = 0
+    damageSliderBg.Parent = damageFrame
+    
+    local damageSliderFill = Instance.new("Frame")
+    damageSliderFill.Size = UDim2.new((damageAmount - 5) / 95, 0, 1, 0)  -- Range 5-100
+    damageSliderFill.BackgroundColor3 = Color3.fromRGB(255, 150, 150)
+    damageSliderFill.BorderSizePixel = 0
+    damageSliderFill.Parent = damageSliderBg
+    
+    local damageSliderButton = Instance.new("TextButton")
+    damageSliderButton.Size = UDim2.new(0, 20, 0, 20)
+    damageSliderButton.Position = UDim2.new((damageAmount - 5) / 95, -10, 0.5, -10)
+    damageSliderButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    damageSliderButton.Text = ""
+    damageSliderButton.BorderSizePixel = 0
+    damageSliderButton.Parent = damageSliderBg
+    yPos = yPos + 60
+    
     -- SECTION: ANTI-LAG INFO
-    -- =========================================
     local antiLagLabel = Instance.new("TextLabel")
     antiLagLabel.Size = UDim2.new(1, 0, 0, 25)
     antiLagLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -960,7 +1019,6 @@ local function createGUI()
     yPos = yPos + 60
     contentFrame.CanvasSize = UDim2.new(0, 0, 0, yPos + 10)
 
-    
     -- =========================================
     -- FUNGSI UPDATE GUI
     -- =========================================
@@ -978,17 +1036,17 @@ local function createGUI()
             toggleFloatBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
         end
         
-        -- Update status auto click
-        if autoClickActive then
-            autoClickValue.Text = "ON"
-            autoClickValue.TextColor3 = Color3.fromRGB(100, 255, 100)
-            toggleClickBtn.Text = "🖱️ MATIKAN AUTO CLICK"
-            toggleClickBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+        -- Update status kill aura
+        if killAuraActive then
+            killStatusValue.Text = "ON"
+            killStatusValue.TextColor3 = Color3.fromRGB(100, 255, 100)
+            toggleKillBtn.Text = "⚔️ MATIKAN KILL AURA"
+            toggleKillBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
         else
-            autoClickValue.Text = "OFF"
-            autoClickValue.TextColor3 = Color3.fromRGB(255, 100, 100)
-            toggleClickBtn.Text = "🖱️ AKTIFKAN AUTO CLICK"
-            toggleClickBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 200)
+            killStatusValue.Text = "OFF"
+            killStatusValue.TextColor3 = Color3.fromRGB(255, 100, 100)
+            toggleKillBtn.Text = "⚔️ AKTIFKAN KILL AURA"
+            toggleKillBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
         end
         
         -- Update target info
@@ -1014,26 +1072,31 @@ local function createGUI()
         
         -- Update values
         searchRadiusValue.Text = searchRadius .. "m"
-        clickRadiusValue.Text = attackRadius .. "m"
-        speedValue.Text = string.format("%.1f", clickSpeed) .. "s"
+        killRadiusValue.Text = killRadius .. "m"
+        speedValue.Text = string.format("%.1f", killSpeed) .. "s"
         distanceValue.Text = floatDistance .. "m"
+        damageValue.Text = damageAmount
         
         -- Update slider positions
         local searchPercent = (searchRadius - 20) / 130
         searchSliderFill.Size = UDim2.new(searchPercent, 0, 1, 0)
         searchSliderButton.Position = UDim2.new(searchPercent, -10, 0.5, -10)
         
-        local clickPercent = (attackRadius - 5) / 45
-        clickSliderFill.Size = UDim2.new(clickPercent, 0, 1, 0)
-        clickSliderButton.Position = UDim2.new(clickPercent, -10, 0.5, -10)
+        local killPercent = (killRadius - 5) / 45
+        killSliderFill.Size = UDim2.new(killPercent, 0, 1, 0)
+        killSliderButton.Position = UDim2.new(killPercent, -10, 0.5, -10)
         
-        local speedPercent = 1 - ((clickSpeed - 0.05) / 0.95)
+        local speedPercent = 1 - ((killSpeed - 0.05) / 0.95)
         speedSliderFill.Size = UDim2.new(speedPercent, 0, 1, 0)
         speedSliderButton.Position = UDim2.new(speedPercent, -10, 0.5, -10)
         
         local distPercent = (floatDistance - 2) / 13
         distanceSliderFill.Size = UDim2.new(distPercent, 0, 1, 0)
         distanceSliderButton.Position = UDim2.new(distPercent, -10, 0.5, -10)
+        
+        local damagePercent = (damageAmount - 5) / 95
+        damageSliderFill.Size = UDim2.new(damagePercent, 0, 1, 0)
+        damageSliderButton.Position = UDim2.new(damagePercent, -10, 0.5, -10)
         
         -- Update anti-lag info
         noMobText.Text = "Pencarian Gagal: " .. noMobCount .. "x"
@@ -1069,11 +1132,11 @@ local function createGUI()
         end)
     end)
     
-    -- Tombol Toggle Auto Click
-    toggleClickBtn.MouseButton1Click:Connect(function()
+    -- Tombol Toggle Kill Aura
+    toggleKillBtn.MouseButton1Click:Connect(function()
         pcall(function()
-            autoClickActive = not autoClickActive
-            print("🖱️ AUTO CLICK:", autoClickActive and "AKTIF" or "DIMATIKAN")
+            killAuraActive = not killAuraActive
+            print("⚔️ KILL AURA:", killAuraActive and "AKTIF" or "DIMATIKAN")
             updateGUI()
         end)
     end)
@@ -1150,16 +1213,17 @@ local function createGUI()
     
     -- Slider drag functionality
     local searchDragging = false
-    local clickRadiusDragging = false
+    local killRadiusDragging = false
     local speedDragging = false
     local distanceDragging = false
+    local damageDragging = false
     
     searchSliderButton.MouseButton1Down:Connect(function()
         searchDragging = true
     end)
     
-    clickSliderButton.MouseButton1Down:Connect(function()
-        clickRadiusDragging = true
+    killSliderButton.MouseButton1Down:Connect(function()
+        killRadiusDragging = true
     end)
     
     speedSliderButton.MouseButton1Down:Connect(function()
@@ -1170,12 +1234,17 @@ local function createGUI()
         distanceDragging = true
     end)
     
+    damageSliderButton.MouseButton1Down:Connect(function()
+        damageDragging = true
+    end)
+    
     userInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             searchDragging = false
-            clickRadiusDragging = false
+            killRadiusDragging = false
             speedDragging = false
             distanceDragging = false
+            damageDragging = false
         end
     end)
     
@@ -1203,17 +1272,17 @@ local function createGUI()
                 end
             end
             
-            if clickRadiusDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            if killRadiusDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
                 local mousePos = userInputService:GetMouseLocation()
-                local sliderPos = clickSliderBg.AbsolutePosition
-                local sliderSize = clickSliderBg.AbsoluteSize.X
+                local sliderPos = killSliderBg.AbsolutePosition
+                local sliderSize = killSliderBg.AbsoluteSize.X
                 
                 if sliderSize > 0 then
                     local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
                     local percent = relativeX / sliderSize
                     
-                    attackRadius = math.floor(5 + (percent * 45))
-                    attackRadius = math.clamp(attackRadius, 5, 50)
+                    killRadius = math.floor(5 + (percent * 45))
+                    killRadius = math.clamp(killRadius, 5, 50)
                     
                     updateGUI()
                 end
@@ -1228,10 +1297,9 @@ local function createGUI()
                     local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
                     local percent = relativeX / sliderSize
                     
-                    -- Invert: left = fast, right = slow
-                    clickSpeed = 0.05 + ((1 - percent) * 0.95)
-                    clickSpeed = math.clamp(clickSpeed, 0.05, 1.0)
-                    clickCooldown = clickSpeed
+                    killSpeed = 0.05 + ((1 - percent) * 0.95)
+                    killSpeed = math.clamp(killSpeed, 0.05, 1.0)
+                    killCooldown = killSpeed
                     
                     updateGUI()
                 end
@@ -1252,6 +1320,22 @@ local function createGUI()
                     if floatingActive and currentTarget then
                         floatBehindMob(currentTarget)
                     end
+                    
+                    updateGUI()
+                end
+            end
+            
+            if damageDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                local mousePos = userInputService:GetMouseLocation()
+                local sliderPos = damageSliderBg.AbsolutePosition
+                local sliderSize = damageSliderBg.AbsoluteSize.X
+                
+                if sliderSize > 0 then
+                    local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
+                    local percent = relativeX / sliderSize
+                    
+                    damageAmount = math.floor(5 + (percent * 95))
+                    damageAmount = math.clamp(damageAmount, 5, 100)
                     
                     updateGUI()
                 end
@@ -1291,17 +1375,33 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
     pcall(function()
         if gameProcessed then return end
         
-        if input.KeyCode == Enum.KeyCode.F and not floatingActive then
+        if input.KeyCode == Enum.KeyCode.F then
             if not character or not humanoidRootPart then
                 waitForCharacter()
             end
             
-            floatingActive = true
-            print("🚀 FLOATING MODE: AKTIF (via keyboard)")
-            noMobCount = 0
-            searchCooldown = SEARCH_DELAY_NORMAL
-            lastSearchTime = 0
-            findNewTarget()
+            floatingActive = not floatingActive
+            
+            if floatingActive then
+                print("🚀 FLOATING MODE: AKTIF (via keyboard)")
+                noMobCount = 0
+                searchCooldown = SEARCH_DELAY_NORMAL
+                lastSearchTime = 0
+                findNewTarget()
+            else
+                print("💤 FLOATING MODE: DIMATIKAN (via keyboard)")
+                resetPosition()
+                currentTarget = nil
+            end
+            
+            if updateGUIFunc then
+                updateGUIFunc()
+            end
+        end
+        
+        if input.KeyCode == Enum.KeyCode.G then
+            killAuraActive = not killAuraActive
+            print("⚔️ KILL AURA:", killAuraActive and "AKTIF" or "DIMATIKAN")
             
             if updateGUIFunc then
                 updateGUIFunc()
@@ -1310,7 +1410,7 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
     end)
 end)
 
--- LOOP UTAMA (Floating + Auto Click)
+-- LOOP UTAMA (Floating + Kill Aura)
 runService.Heartbeat:Connect(function()
     pcall(function()
         if not character or not humanoidRootPart then
@@ -1320,9 +1420,9 @@ runService.Heartbeat:Connect(function()
             return
         end
         
-        -- Auto Click di TENGAH LAYAR (jalan terus kalau aktif)
-        if autoClickActive and floatingActive then
-            autoClick()
+        -- Kill Aura (jalan terus kalau aktif)
+        if killAuraActive and floatingActive then
+            killAura()
         end
         
         if not floatingActive then return end
@@ -1352,22 +1452,28 @@ end)
 -- Inisialisasi awal
 updateCharacter()
 
--- Buat GUI (SESUAIKAN DENGAN KODE GUI ANDA)
- updateGUIFunc = createGUI()  -- UNCOMMENT INI jika sudah menambahkan kode GUI
+-- Buat GUI
+updateGUIFunc = createGUI()
 
 print("=================================")
-print("✅ RPG Grinder - AUTO CLICK TENGAH + FILTER NPC")
+print("⚔️ RPG Grinder - KILL AURA MODE")
 print("=================================")
-print("🎯 FITUR BARU:")
-print("   • Auto Click di TENGAH LAYAR (tidak ikut kursor)")
-print("   • Filter NPC (tidak akan teleport ke NPC)")
+print("🎯 FITUR KILL AURA:")
+print("   • Langsung kurangi health mob")
+print("   • Radius kill bisa diatur (5-50)")
+print("   • Damage per tick bisa diatur (5-100)")
+print("   • Kecepatan kill bisa diatur")
+print("   • Filter NPC (tidak ke NPC)")
 print("=================================")
-print("🖱️ Cara Penggunaan:")
-print("1. Atur radius click (5-50)")
-print("2. Atur kecepatan click")
-print("3. Aktifkan Floating Mode")
-print("4. Aktifkan Auto Click")
-print("5. Script akan klik di TENGAH layar otomatis!")
+print("⚔️ Cara Penggunaan:")
+print("1. Atur radius kill (5-50)")
+print("2. Atur damage (5-100)")
+print("3. Atur kecepatan kill")
+print("4. Aktifkan Floating Mode")
+print("5. Aktifkan Kill Aura")
+print("6. Mob akan mati otomatis!")
 print("=================================")
-
-
+print("⌨️ Keyboard Shortcut:")
+print("F = Toggle Floating Mode")
+print("G = Toggle Kill Aura")
+print("=================================")
