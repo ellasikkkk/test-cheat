@@ -1,84 +1,81 @@
--- Script RPG Grinder - FLOATING MODE
--- Karakter selalu berada di atas mob terdekat
+-- Script Utama RPG Grinder - FLOATING MODE
+-- Karakter selalu mengambang di atas mob terdekat
 
 local player = game.Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 local userInputService = game:GetService("UserInputService")
+local runService = game:GetService("RunService")
 local players = game:GetService("Players")
 
--- VARIABEL KONTROL
+-- VARIABEL FLOATING
 local floatingActive = false
 local currentTarget = nil
-local floatHeight = 8  -- Tinggi mengambang di atas mob
+local floatHeight = 8  -- Tinggi mengambang (bisa diatur)
 
--- FUNGSI: Cari mob terdekat
-local function getNearestMob()
+-- FUNGSI: Mendapatkan mob terdekat (sama seperti kode Anda)
+local function getNearestMob(range)
     local nearestMob = nil
-    local shortestDistance = math.huge
-    local playerPos = humanoidRootPart.Position
-    local range = 50  -- Jarak pencarian
+    local shortestDistance = range or math.huge
     
-    -- Cari mob di sekitar
-    for _, obj in pairs(workspace:GetChildren()) do
-        -- Cek apakah ini mob (punya Humanoid dan bukan player)
+    for _, obj in pairs(workspace:GetDescendants()) do
         if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
-            local humanoid = obj:FindFirstChild("Humanoid")
-            local rootPart = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
-            
-            -- Pastikan mob masih hidup
-            if humanoid and rootPart and humanoid.Health > 0 then
-                local distance = (playerPos - rootPart.Position).Magnitude
-                
-                -- Cari yang terdekat
-                if distance < shortestDistance and distance <= range then
-                    shortestDistance = distance
-                    nearestMob = {
-                        model = obj,
-                        rootPart = rootPart,
-                        humanoid = humanoid
-                    }
+            local mobRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
+            if mobRoot then
+                local humanoid = obj:FindFirstChild("Humanoid")
+                -- Pastikan mob masih hidup
+                if humanoid and humanoid.Health > 0 then
+                    local distance = (humanoidRootPart.Position - mobRoot.Position).Magnitude
+                    if distance < shortestDistance then
+                        shortestDistance = distance
+                        nearestMob = {
+                            model = obj,
+                            rootPart = mobRoot,
+                            humanoid = humanoid
+                        }
+                    end
                 end
             end
         end
     end
-    
-    return nearestMob
+    return nearestMob, shortestDistance
 end
 
 -- FUNGSI: Terbang ke atas mob
 local function floatAboveMob(mob)
     if not mob or not mob.rootPart then return end
     
-    -- Posisi di atas mob (mengambang)
+    -- Hitung posisi di atas mob
     local targetPos = mob.rootPart.Position + Vector3.new(0, floatHeight, 0)
     
-    -- Teleport halus (bisa langsung atau smooth)
+    -- Teleport ke atas mob
     humanoidRootPart.CFrame = CFrame.new(targetPos)
     
-    -- Opsi: Tampilkan informasi mob
-    print("🎯 Target:", mob.model.Name, 
+    -- Tampilkan informasi (opsional, bisa dihapus kalau ganggu)
+    print("📍 Di atas:", mob.model.Name, 
           "| HP:", math.floor(mob.humanoid.Health),
-          "| Jarak:", math.floor((humanoidRootPart.Position - mob.rootPart.Position).Magnitude))
+          "| Jarak ke mob:", math.floor((humanoidRootPart.Position - mob.rootPart.Position).Magnitude))
 end
 
 -- FUNGSI: Cari target baru
 local function findNewTarget()
-    currentTarget = getNearestMob()
+    local mob = getNearestMob(getgenv().TeleportRange or 50)
     
-    if currentTarget then
-        print("✅ Menemukan target:", currentTarget.model.Name)
+    if mob then
+        currentTarget = mob
         floatAboveMob(currentTarget)
+        print("✅ Target baru:", currentTarget.model.Name)
     else
         print("❌ Tidak ada mob di sekitar")
+        currentTarget = nil
     end
 end
 
--- FUNGSI: Cek apakah target masih ada dan hidup
+-- FUNGSI: Cek apakah target masih valid
 local function isTargetValid()
     if not currentTarget then return false end
     
-    -- Cek apakah mob masih ada di workspace
+    -- Cek apakah mob masih ada di game
     if not currentTarget.model or not currentTarget.model.Parent then
         return false
     end
@@ -88,46 +85,52 @@ local function isTargetValid()
         return false
     end
     
-    -- Cek jarak (jika terlalu jauh, cari baru)
-    local distance = (humanoidRootPart.Position - currentTarget.rootPart.Position).Magnitude
-    if distance > 60 then  -- Jika terlalu jauh
+    -- Cek apakah root part masih ada
+    if not currentTarget.rootPart or not currentTarget.rootPart.Parent then
         return false
     end
     
     return true
 end
 
--- KEYBIND SYSTEM
+-- KEYBIND SYSTEM (sama seperti kode Anda, tapi dimodifikasi)
 userInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     
-    -- Tombol F: Aktifkan mode floating
+    -- Tombol F: Toggle Floating Mode
     if input.KeyCode == Enum.KeyCode[getgenv().KeyBindToggle or "F"] then
         floatingActive = not floatingActive
         
         if floatingActive then
             print("🚀 FLOATING MODE: ON")
             print("📍 Karakter akan mengambang di atas mob")
-            print("🖱️ Silakan klik manual untuk menyerang")
-            
-            -- Langsung cari target pertama
-            findNewTarget()
+            print("🖱️ Silakan klik untuk menyerang")
+            findNewTarget()  -- Langsung cari target
         else
             print("💤 FLOATING MODE: OFF")
             currentTarget = nil
         end
     end
     
-    -- Tombol T: Cari target baru manual
-    if input.KeyCode == Enum.KeyCode.T then
-        findNewTarget()
+    -- Tombol H (atau sesuai setting): Cari target baru manual
+    if input.KeyCode == Enum.KeyCode[getgenv().TeleportKey or "H"] then
+        if floatingActive then
+            findNewTarget()
+        else
+            -- Kalau floating mati, tetap bisa teleport biasa
+            local mob = getNearestMob(getgenv().TeleportRange or 50)
+            if mob then
+                humanoidRootPart.CFrame = mob.rootPart.CFrame + Vector3.new(0, 5, 0)
+                print("📞 Teleport ke:", mob.model.Name)
+            end
+        end
     end
     
-    -- Tombol R: Reset posisi (turun ke tanah)
+    -- Tombol R: Reset/Turun ke tanah
     if input.KeyCode == Enum.KeyCode.R then
         if currentTarget then
             -- Turun ke tanah di dekat mob
-            local groundPos = currentTarget.rootPart.Position + Vector3.new(2, 0, 2)
+            local groundPos = currentTarget.rootPart.Position + Vector3.new(3, 0, 3)
             humanoidRootPart.CFrame = CFrame.new(groundPos)
             print("⬇️ Turun ke tanah")
         end
@@ -135,27 +138,25 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
 end)
 
 -- LOOP UTAMA - Menjaga posisi di atas mob
-game:GetService("RunService").Heartbeat:Connect(function()
+runService.Heartbeat:Connect(function()
     if not floatingActive then return end
     
     -- Validasi target
     if not isTargetValid() then
-        -- Cari target baru
-        findNewTarget()
+        findNewTarget()  -- Cari target baru kalau yang lama mati/hilang
     else
         -- Tetap di atas mob
         floatAboveMob(currentTarget)
     end
     
-    -- Delay kecil agar tidak terlalu berat
-    wait(0.1)
+    wait(0.1)  -- Delay kecil agar tidak terlalu berat
 end)
 
 print("=================================")
-print("✅ FLOATING MODE Loaded!")
+print("✅ RPG Grinder - FLOATING MODE")
 print("=================================")
-print("Tekan F = ON/OFF Floating Mode")
-print("Tekan T = Cari target baru")
+print("Tekan", getgenv().KeyBindToggle or "F", "= ON/OFF Floating")
+print("Tekan", getgenv().TeleportKey or "H", "= Cari target baru")
 print("Tekan R = Turun ke tanah")
 print("=================================")
 print("📍 Fungsi: Karakter mengambang di atas mob")
