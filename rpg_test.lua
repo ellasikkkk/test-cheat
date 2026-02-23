@@ -1,5 +1,5 @@
 -- Script Utama RPG Grinder - FLOATING MODE
--- Karakter selalu mengambang di atas mob terdekat
+-- Karakter selalu mengambang di atas mob terdekat dan menghadap ke bawah
 
 local player = game.Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -13,7 +13,7 @@ local floatingActive = false
 local currentTarget = nil
 local floatHeight = 8  -- Tinggi mengambang (bisa diatur)
 
--- FUNGSI: Mendapatkan mob terdekat (sama seperti kode Anda)
+-- FUNGSI: Mendapatkan mob terdekat
 local function getNearestMob(range)
     local nearestMob = nil
     local shortestDistance = range or math.huge
@@ -23,7 +23,6 @@ local function getNearestMob(range)
             local mobRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
             if mobRoot then
                 local humanoid = obj:FindFirstChild("Humanoid")
-                -- Pastikan mob masih hidup
                 if humanoid and humanoid.Health > 0 then
                     local distance = (humanoidRootPart.Position - mobRoot.Position).Magnitude
                     if distance < shortestDistance then
@@ -41,24 +40,31 @@ local function getNearestMob(range)
     return nearestMob, shortestDistance
 end
 
--- FUNGSI: Terbang ke atas mob
+-- FUNGSI: Terbang ke atas mob dan menghadap ke bawah
 local function floatAboveMob(mob)
     if not mob or not mob.rootPart then return end
     
     -- Hitung posisi di atas mob
     local targetPos = mob.rootPart.Position + Vector3.new(0, floatHeight, 0)
-
-    -- Arah rotasi
-    local lookAtMob = CFrame.lookAt(targetPos, mob.rootPart.Position)
-local lookDownCFrame = lookAtMob * CFrame.Angles(math.rad(-30), 0, 0)
     
-    -- Teleport ke atas mob
-    humanoidRootPart.CFrame = CFrame.new(targetPos)
+    ---=== MEMBUAT KARAKTER MENGHADAP KE BAWAH ===---
+    -- local lookAtMob = CFrame.lookAt(targetPos, mob.rootPart.Position)
+    -- local lookDownCFrame = lookAtMob * CFrame.Angles(math.rad(-45), 0, 0)
     
-    -- Tampilkan informasi (opsional, bisa dihapus kalau ganggu)
+    -- Terapkan CFrame
+    humanoidRootPart.CFrame = lookDownCFrame
+    
+    -- Tampilkan informasi
     print("📍 Di atas:", mob.model.Name, 
           "| HP:", math.floor(mob.humanoid.Health),
-          "| Jarak ke mob:", math.floor((humanoidRootPart.Position - mob.rootPart.Position).Magnitude))
+          "| Posisi: Menghadap ke bawah")
+end
+
+-- FUNGSI: Reset rotasi ke normal (untuk turun ke tanah)
+local function resetRotation()
+    -- Kembalikan ke rotasi normal (berdiri tegak)
+    local currentPos = humanoidRootPart.Position
+    humanoidRootPart.CFrame = CFrame.new(currentPos)
 end
 
 -- FUNGSI: Cari target baru
@@ -79,17 +85,14 @@ end
 local function isTargetValid()
     if not currentTarget then return false end
     
-    -- Cek apakah mob masih ada di game
     if not currentTarget.model or not currentTarget.model.Parent then
         return false
     end
     
-    -- Cek apakah masih hidup
     if not currentTarget.humanoid or currentTarget.humanoid.Health <= 0 then
         return false
     end
     
-    -- Cek apakah root part masih ada
     if not currentTarget.rootPart or not currentTarget.rootPart.Parent then
         return false
     end
@@ -97,7 +100,7 @@ local function isTargetValid()
     return true
 end
 
--- KEYBIND SYSTEM (sama seperti kode Anda, tapi dimodifikasi)
+-- KEYBIND SYSTEM
 userInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     
@@ -107,21 +110,21 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
         
         if floatingActive then
             print("🚀 FLOATING MODE: ON")
-            print("📍 Karakter akan mengambang di atas mob")
+            print("📍 Karakter mengambang di atas mob (menghadap ke bawah)")
             print("🖱️ Silakan klik untuk menyerang")
-            findNewTarget()  -- Langsung cari target
+            findNewTarget()
         else
             print("💤 FLOATING MODE: OFF")
+            resetRotation()  -- Kembalikan rotasi normal
             currentTarget = nil
         end
     end
     
-    -- Tombol H (atau sesuai setting): Cari target baru manual
+    -- Tombol H: Cari target baru manual
     if input.KeyCode == Enum.KeyCode[getgenv().TeleportKey or "H"] then
         if floatingActive then
             findNewTarget()
         else
-            -- Kalau floating mati, tetap bisa teleport biasa
             local mob = getNearestMob(getgenv().TeleportRange or 50)
             if mob then
                 humanoidRootPart.CFrame = mob.rootPart.CFrame + Vector3.new(0, 5, 0)
@@ -132,11 +135,13 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
     
     -- Tombol R: Reset/Turun ke tanah
     if input.KeyCode == Enum.KeyCode.R then
-        if currentTarget then
-            -- Turun ke tanah di dekat mob
-            local groundPos = currentTarget.rootPart.Position + Vector3.new(3, 0, 3)
-            humanoidRootPart.CFrame = CFrame.new(groundPos)
-            print("⬇️ Turun ke tanah")
+        if floatingActive then
+            floatingActive = false
+            resetRotation()
+            print("⬇️ Turun ke tanah (floating OFF)")
+            currentTarget = nil
+        else
+            print("⚠️ Floating mode tidak aktif")
         end
     end
 end)
@@ -145,26 +150,23 @@ end)
 runService.Heartbeat:Connect(function()
     if not floatingActive then return end
     
-    -- Validasi target
     if not isTargetValid() then
-        findNewTarget()  -- Cari target baru kalau yang lama mati/hilang
+        findNewTarget()
     else
-        -- Tetap di atas mob
         floatAboveMob(currentTarget)
     end
     
-    wait(0.1)  -- Delay kecil agar tidak terlalu berat
+    wait(0.1)
 end)
 
 print("=================================")
 print("✅ RPG Grinder - FLOATING MODE")
+print("    dengan rotasi menghadap ke bawah")
 print("=================================")
 print("Tekan", getgenv().KeyBindToggle or "F", "= ON/OFF Floating")
 print("Tekan", getgenv().TeleportKey or "H", "= Cari target baru")
 print("Tekan R = Turun ke tanah")
 print("=================================")
-print("📍 Fungsi: Karakter mengambang di atas mob")
+print("📍 Karakter menghadap ke bawah saat melayang")
 print("🖱️ Anda tinggal klik untuk menyerang")
 print("=================================")
-
-
