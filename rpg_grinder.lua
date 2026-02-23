@@ -76,7 +76,7 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
         print("AutoFarm:", getgenv().AutoFarm and "ON" or "OFF")
     end
     
-    if input.KeyCode == Enum.KeyCode[getgenv().TeleportKey or "`"] then
+    if input.KeyCode == Enum.KeyCode[getgenv().TeleportKey or "H"] then
         teleportToNearestMob()
     end
 end)
