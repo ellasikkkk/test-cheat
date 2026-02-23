@@ -1,5 +1,5 @@
 -- Script Utama RPG Grinder - FLOATING MODE + GUI LENGKAP
--- Semua fitur bisa diakses melalui GUI
+-- FIX: Memperbaiki error "attempt to call a nil value"
 
 local player = game.Players.LocalPlayer
 local userInputService = game:GetService("UserInputService")
@@ -23,17 +23,169 @@ local SEARCH_DELAY_LOW = 2
 local SEARCH_DELAY_IDLE = 5
 local MAX_NO_MOB_COUNT = 5
 
+-- VARIABEL GUI
+local updateGUIFunc = nil  -- Akan diisi nanti
+
 -- =============================================
--- MEMBUAT GUI LENGKAP
+-- FUNGSI-FUNGSI UTAMA (DIDEFINISIKAN DULU)
+-- =============================================
+
+-- FUNGSI: Update referensi karakter
+local function updateCharacter()
+    character = player.Character
+    if character then
+        humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+        if not humanoidRootPart then
+            humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+        end
+        print("✅ Karakter ditemukan:", character.Name)
+        return true
+    end
+    return false
+end
+
+-- FUNGSI: Tunggu karakter respawn
+local function waitForCharacter()
+    print("⏳ Menunggu karakter respawn...")
+    character = player.Character or player.CharacterAdded:Wait()
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    print("✅ Karakter telah respawn!")
+    return true
+end
+
+-- FUNGSI: Mendapatkan mob terdekat
+local function getNearestMob(range)
+    if not humanoidRootPart then return nil end
+    
+    local nearestMob = nil
+    local shortestDistance = range or math.huge
+    local playerPos = humanoidRootPart.Position
+    
+    local searchRange = (range or 50) * 1.5
+    local region = Region3.new(
+        playerPos - Vector3.new(searchRange, searchRange, searchRange),
+        playerPos + Vector3.new(searchRange, searchRange, searchRange)
+    )
+    
+    -- Protect from errors
+    local parts = {}
+    pcall(function()
+        parts = workspace:FindPartsInRegion3(region, nil, 100)
+    end)
+    
+    for _, part in ipairs(parts) do
+        local obj = part.Parent
+        if obj and obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
+            local mobRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
+            if mobRoot then
+                local humanoid = obj:FindFirstChild("Humanoid")
+                if humanoid and humanoid.Health > 0 then
+                    local distance = (playerPos - mobRoot.Position).Magnitude
+                    if distance < shortestDistance and distance <= (range or 50) then
+                        shortestDistance = distance
+                        nearestMob = {
+                            model = obj,
+                            rootPart = mobRoot,
+                            humanoid = humanoid,
+                            lastHealth = humanoid.Health
+                        }
+                    end
+                end
+            end
+        end
+    end
+    
+    return nearestMob
+end
+
+-- FUNGSI: Teleport ke BELAKANG mob
+local function floatBehindMob(mob)
+    if not mob or not mob.rootPart or not humanoidRootPart then return end
+    
+    local success, result = pcall(function()
+        local mobPosition = mob.rootPart.Position
+        local mobDirection = mob.rootPart.CFrame.LookVector
+        local behindPosition = mobPosition - (mobDirection * floatDistance)
+        behindPosition = behindPosition + Vector3.new(0, 2, 0)
+        local lookAtMob = CFrame.lookAt(behindPosition, mobPosition)
+        humanoidRootPart.CFrame = lookAtMob
+    end)
+    
+    if not success then
+        print("⚠️ Error saat teleport:", result)
+    end
+end
+
+-- FUNGSI: Cek apakah mob masih hidup
+local function isMobAlive(mob)
+    if not mob then return false end
+    if not mob.model or not mob.model.Parent then return false end
+    if not mob.humanoid then return false end
+    
+    local success, health = pcall(function()
+        return mob.humanoid.Health
+    end)
+    
+    if not success or health <= 0 then return false end
+    
+    if not mob.rootPart or not mob.rootPart.Parent then return false end
+    return true
+end
+
+-- FUNGSI: Cari target baru (DENGAN ANTI-LAG)
+local function findNewTarget()
+    if not humanoidRootPart then 
+        return 
+    end
+    
+    local currentTime = tick()
+    if currentTime - lastSearchTime < searchCooldown then
+        return
+    end
+    
+    local mob = getNearestMob(getgenv().TeleportRange or 50)
+    
+    if mob then
+        noMobCount = 0
+        searchCooldown = SEARCH_DELAY_NORMAL
+        currentTarget = mob
+        floatBehindMob(currentTarget)
+    else
+        noMobCount = noMobCount + 1
+        
+        if noMobCount >= MAX_NO_MOB_COUNT then
+            searchCooldown = SEARCH_DELAY_IDLE
+        else
+            searchCooldown = SEARCH_DELAY_LOW
+        end
+        
+        currentTarget = nil
+    end
+    
+    lastSearchTime = currentTime
+end
+
+-- FUNGSI: Reset posisi
+local function resetPosition()
+    if humanoidRootPart then
+        local currentPos = humanoidRootPart.Position
+        humanoidRootPart.CFrame = CFrame.new(currentPos)
+    end
+end
+
+-- =============================================
+-- MEMBUAT GUI (SETELAH FUNGSI-FUNGSI DIDEKLARASIKAN)
 -- =============================================
 
 local function createGUI()
     -- Hapus GUI lama jika ada
-    for _, gui in pairs(player.PlayerGui:GetChildren()) do
-        if gui.Name == "FloatingModeGUI" then
-            gui:Destroy()
+    pcall(function()
+        for _, gui in pairs(player.PlayerGui:GetChildren()) do
+            if gui.Name == "FloatingModeGUI" then
+                gui:Destroy()
+            end
         end
-    end
+    end)
     
     -- ScreenGui utama
     local screenGui = Instance.new("ScreenGui")
@@ -51,18 +203,8 @@ local function createGUI()
     mainFrame.BackgroundTransparency = 0.1
     mainFrame.BorderSizePixel = 0
     mainFrame.Active = true
-    mainFrame.Draggable = true  -- Bisa di-drag
+    mainFrame.Draggable = true
     mainFrame.Parent = screenGui
-    
-    -- Shadow effect
-    local shadow = Instance.new("Frame")
-    shadow.Size = UDim2.new(1, 10, 1, 10)
-    shadow.Position = UDim2.new(0, -5, 0, -5)
-    shadow.BackgroundColor3 = Color3.new(0, 0, 0)
-    shadow.BackgroundTransparency = 0.5
-    shadow.BorderSizePixel = 0
-    shadow.ZIndex = -1
-    shadow.Parent = mainFrame
     
     -- Judul GUI
     local titleBar = Instance.new("Frame")
@@ -97,7 +239,7 @@ local function createGUI()
         screenGui:Destroy()
     end)
     
-    -- Konten GUI (scrollable)
+    -- Konten GUI
     local contentFrame = Instance.new("ScrollingFrame")
     contentFrame.Size = UDim2.new(1, -20, 1, -50)
     contentFrame.Position = UDim2.new(0, 10, 0, 45)
@@ -107,11 +249,9 @@ local function createGUI()
     contentFrame.CanvasSize = UDim2.new(0, 0, 0, 350)
     contentFrame.Parent = mainFrame
     
-    local yPos = 5  -- Posisi Y untuk item-item
+    local yPos = 5
     
-    -- =========================================
     -- SECTION: STATUS
-    -- =========================================
     local statusLabel = Instance.new("TextLabel")
     statusLabel.Size = UDim2.new(1, 0, 0, 25)
     statusLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -166,9 +306,7 @@ local function createGUI()
     toggleBtn.Parent = contentFrame
     yPos = yPos + 90
     
-    -- =========================================
     -- SECTION: TARGET INFO
-    -- =========================================
     local targetLabel = Instance.new("TextLabel")
     targetLabel.Size = UDim2.new(1, 0, 0, 25)
     targetLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -245,9 +383,7 @@ local function createGUI()
     resetBtn.Parent = contentFrame
     yPos = yPos + 45
     
-    -- =========================================
     -- SECTION: PENGATURAN
-    -- =========================================
     local settingLabel = Instance.new("TextLabel")
     settingLabel.Size = UDim2.new(1, 0, 0, 25)
     settingLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -312,9 +448,7 @@ local function createGUI()
     sliderButton.Parent = sliderBg
     yPos = yPos + 60
     
-    -- =========================================
     -- SECTION: ANTI-LAG INFO
-    -- =========================================
     local antiLagLabel = Instance.new("TextLabel")
     antiLagLabel.Size = UDim2.new(1, 0, 0, 25)
     antiLagLabel.Position = UDim2.new(0, 0, 0, yPos)
@@ -360,7 +494,7 @@ local function createGUI()
     contentFrame.CanvasSize = UDim2.new(0, 0, 0, yPos + 10)
     
     -- =========================================
-    -- FUNGSI UPDATE GUI
+    -- FUNGSI UPDATE GUI (didefinisikan di sini)
     -- =========================================
     local function updateGUI()
         -- Update status
@@ -376,17 +510,19 @@ local function createGUI()
             toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
         end
         
-        -- Update target info
-        if floatingActive and currentTarget and isMobAlive(currentTarget) then
-            targetNameLabel.Text = "Target: " .. currentTarget.model.Name
-            targetHPLabel.Text = "HP: " .. math.floor(currentTarget.humanoid.Health)
-            local dist = (humanoidRootPart.Position - currentTarget.rootPart.Position).Magnitude
-            targetDistLabel.Text = "Jarak: " .. math.floor(dist) .. " studs"
-        else
-            targetNameLabel.Text = "Target: -"
-            targetHPLabel.Text = "HP: -"
-            targetDistLabel.Text = "Jarak: -"
-        end
+        -- Update target info (dengan pcall untuk safety)
+        pcall(function()
+            if floatingActive and currentTarget and isMobAlive(currentTarget) and humanoidRootPart then
+                targetNameLabel.Text = "Target: " .. tostring(currentTarget.model.Name)
+                targetHPLabel.Text = "HP: " .. math.floor(currentTarget.humanoid.Health)
+                local dist = (humanoidRootPart.Position - currentTarget.rootPart.Position).Magnitude
+                targetDistLabel.Text = "Jarak: " .. math.floor(dist) .. " studs"
+            else
+                targetNameLabel.Text = "Target: -"
+                targetHPLabel.Text = "HP: -"
+                targetDistLabel.Text = "Jarak: -"
+            end
+        end)
         
         -- Update jarak
         distanceValue.Text = floatDistance .. "m"
@@ -396,7 +532,7 @@ local function createGUI()
         
         -- Update anti-lag info
         noMobText.Text = "Pencarian Gagal: " .. noMobCount .. "x"
-        cooldownText.Text = "Cooldown: " .. searchCooldown .. " detik"
+        cooldownText.Text = "Cooldown: " .. string.format("%.1f", searchCooldown) .. " detik"
     end
     
     -- =========================================
@@ -405,50 +541,56 @@ local function createGUI()
     
     -- Tombol Toggle
     toggleBtn.MouseButton1Click:Connect(function()
-        if not character or not humanoidRootPart then
-            waitForCharacter()
-        end
-        
-        floatingActive = not floatingActive
-        
-        if floatingActive then
-            print("🚀 FLOATING MODE: AKTIF (via GUI)")
-            noMobCount = 0
-            searchCooldown = SEARCH_DELAY_NORMAL
-            lastSearchTime = 0
-            findNewTarget()
-        else
-            print("💤 FLOATING MODE: DIMATIKAN (via GUI)")
-            resetPosition()
-            currentTarget = nil
-        end
-        
-        updateGUI()
+        pcall(function()
+            if not character or not humanoidRootPart then
+                waitForCharacter()
+            end
+            
+            floatingActive = not floatingActive
+            
+            if floatingActive then
+                print("🚀 FLOATING MODE: AKTIF (via GUI)")
+                noMobCount = 0
+                searchCooldown = SEARCH_DELAY_NORMAL
+                lastSearchTime = 0
+                findNewTarget()
+            else
+                print("💤 FLOATING MODE: DIMATIKAN (via GUI)")
+                resetPosition()
+                currentTarget = nil
+            end
+            
+            updateGUI()
+        end)
     end)
     
     -- Tombol Cari Target
     searchBtn.MouseButton1Click:Connect(function()
-        if not floatingActive then
-            print("⚠️ Aktifkan floating mode dulu")
-            return
-        end
-        
-        print("🔍 Mencari target manual...")
-        lastSearchTime = 0
-        noMobCount = 0
-        findNewTarget()
-        updateGUI()
+        pcall(function()
+            if not floatingActive then
+                print("⚠️ Aktifkan floating mode dulu")
+                return
+            end
+            
+            print("🔍 Mencari target manual...")
+            lastSearchTime = 0
+            noMobCount = 0
+            findNewTarget()
+            updateGUI()
+        end)
     end)
     
     -- Tombol Reset/Turun
     resetBtn.MouseButton1Click:Connect(function()
-        if floatingActive then
-            floatingActive = false
-            resetPosition()
-            currentTarget = nil
-            print("⬇️ Turun ke tanah (via GUI)")
-            updateGUI()
-        end
+        pcall(function()
+            if floatingActive then
+                floatingActive = false
+                resetPosition()
+                currentTarget = nil
+                print("⬇️ Turun ke tanah (via GUI)")
+                updateGUI()
+            end
+        end)
     end)
     
     -- Slider drag functionality
@@ -465,239 +607,123 @@ local function createGUI()
     end)
     
     userInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local mousePos = userInputService:GetMouseLocation()
-            local sliderPos = sliderBg.AbsolutePosition
-            local sliderSize = sliderBg.AbsoluteSize.X
-            
-            local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
-            local percent = relativeX / sliderSize
-            
-            floatDistance = math.floor(2 + (percent * 13))
-            floatDistance = math.clamp(floatDistance, 2, 15)
-            
-            if floatingActive and currentTarget then
-                floatBehindMob(currentTarget)
+        pcall(function()
+            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                local mousePos = userInputService:GetMouseLocation()
+                local sliderPos = sliderBg.AbsolutePosition
+                local sliderSize = sliderBg.AbsoluteSize.X
+                
+                if sliderSize > 0 then
+                    local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
+                    local percent = relativeX / sliderSize
+                    
+                    floatDistance = math.floor(2 + (percent * 13))
+                    floatDistance = math.clamp(floatDistance, 2, 15)
+                    
+                    if floatingActive and currentTarget then
+                        floatBehindMob(currentTarget)
+                    end
+                    
+                    updateGUI()
+                end
             end
-            
-            updateGUI()
-        end
+        end)
     end)
     
     return updateGUI
 end
 
 -- =============================================
--- FUNGSI-FUNGSI UTAMA (SAMA SEPERTI SEBELUMNYA)
--- =============================================
-
--- FUNGSI: Update referensi karakter
-local function updateCharacter()
-    character = player.Character
-    if character then
-        humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-        print("✅ Karakter ditemukan:", character.Name)
-        return true
-    end
-    return false
-end
-
--- FUNGSI: Tunggu karakter respawn
-local function waitForCharacter()
-    print("⏳ Menunggu karakter respawn...")
-    character = player.Character or player.CharacterAdded:Wait()
-    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    print("✅ Karakter telah respawn!")
-    return true
-end
-
--- FUNGSI: Mendapatkan mob terdekat
-local function getNearestMob(range)
-    local nearestMob = nil
-    local shortestDistance = range or math.huge
-    local playerPos = humanoidRootPart.Position
-    local mobsFound = 0
-    
-    local searchRange = (range or 50) * 1.5
-    local region = Region3.new(
-        playerPos - Vector3.new(searchRange, searchRange, searchRange),
-        playerPos + Vector3.new(searchRange, searchRange, searchRange)
-    )
-    
-    local parts = workspace:FindPartsInRegion3(region, nil, 100)
-    
-    for _, part in ipairs(parts) do
-        local obj = part.Parent
-        if obj and obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
-            local mobRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
-            if mobRoot then
-                local humanoid = obj:FindFirstChild("Humanoid")
-                if humanoid and humanoid.Health > 0 then
-                    mobsFound = mobsFound + 1
-                    local distance = (playerPos - mobRoot.Position).Magnitude
-                    if distance < shortestDistance and distance <= (range or 50) then
-                        shortestDistance = distance
-                        nearestMob = {
-                            model = obj,
-                            rootPart = mobRoot,
-                            humanoid = humanoid,
-                            lastHealth = humanoid.Health
-                        }
-                    end
-                end
-            end
-        end
-    end
-    
-    return nearestMob, shortestDistance, mobsFound
-end
-
--- FUNGSI: Teleport ke BELAKANG mob
-local function floatBehindMob(mob)
-    if not mob or not mob.rootPart then return end
-    
-    local mobPosition = mob.rootPart.Position
-    local mobDirection = mob.rootPart.CFrame.LookVector
-    local behindPosition = mobPosition - (mobDirection * floatDistance)
-    behindPosition = behindPosition + Vector3.new(0, 2, 0)
-    local lookAtMob = CFrame.lookAt(behindPosition, mobPosition)
-    humanoidRootPart.CFrame = lookAtMob
-end
-
--- FUNGSI: Cek apakah mob masih hidup
-local function isMobAlive(mob)
-    if not mob then return false end
-    if not mob.model or not mob.model.Parent then return false end
-    if not mob.humanoid or mob.humanoid.Health <= 0 then return false end
-    if not mob.rootPart or not mob.rootPart.Parent then return false end
-    return true
-end
-
--- FUNGSI: Cari target baru (DENGAN ANTI-LAG)
-local function findNewTarget()
-    if not humanoidRootPart then 
-        return 
-    end
-    
-    local currentTime = tick()
-    if currentTime - lastSearchTime < searchCooldown then
-        return
-    end
-    
-    local mob, _, mobsFound = getNearestMob(getgenv().TeleportRange or 50)
-    
-    if mob then
-        noMobCount = 0
-        searchCooldown = SEARCH_DELAY_NORMAL
-        currentTarget = mob
-        floatBehindMob(currentTarget)
-    else
-        noMobCount = noMobCount + 1
-        
-        if noMobCount >= MAX_NO_MOB_COUNT then
-            searchCooldown = SEARCH_DELAY_IDLE
-        else
-            searchCooldown = SEARCH_DELAY_LOW
-        end
-        
-        currentTarget = nil
-    end
-    
-    lastSearchTime = currentTime
-end
-
--- FUNGSI: Reset posisi
-local function resetPosition()
-    if humanoidRootPart then
-        local currentPos = humanoidRootPart.Position
-        humanoidRootPart.CFrame = CFrame.new(currentPos)
-    end
-end
-
 -- DETEKSI RESPAWN KARAKTER
+-- =============================================
 player.CharacterAdded:Connect(function(newCharacter)
-    print("🔄 Karakter respawn terdeteksi!")
-    character = newCharacter
-    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    
-    noMobCount = 0
-    searchCooldown = SEARCH_DELAY_NORMAL
-    
-    if floatingActive then
-        print("🚀 Floating mode masih aktif, mencari target...")
-        wait(1)
-        findNewTarget()
-    end
-    
-    if updateGUIFunc then
-        updateGUIFunc()
-    end
-end)
-
--- KEYBIND SYSTEM (TETAP ADA, TAPI OPSIONAL)
-userInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    
-    -- Bisa tetap pakai keyboard, tapi tidak wajib
-    if input.KeyCode == Enum.KeyCode.F and not floatingActive then
-        if not character or not humanoidRootPart then
-            waitForCharacter()
-        end
+    pcall(function()
+        print("🔄 Karakter respawn terdeteksi!")
+        character = newCharacter
+        humanoidRootPart = character:WaitForChild("HumanoidRootPart")
         
-        floatingActive = true
-        print("🚀 FLOATING MODE: AKTIF (via keyboard)")
         noMobCount = 0
         searchCooldown = SEARCH_DELAY_NORMAL
-        lastSearchTime = 0
-        findNewTarget()
+        
+        if floatingActive then
+            print("🚀 Floating mode masih aktif, mencari target...")
+            wait(1)
+            findNewTarget()
+        end
         
         if updateGUIFunc then
             updateGUIFunc()
         end
-    end
+    end)
+end)
+
+-- KEYBIND SYSTEM (OPSIONAL)
+userInputService.InputBegan:Connect(function(input, gameProcessed)
+    pcall(function()
+        if gameProcessed then return end
+        
+        if input.KeyCode == Enum.KeyCode.F and not floatingActive then
+            if not character or not humanoidRootPart then
+                waitForCharacter()
+            end
+            
+            floatingActive = true
+            print("🚀 FLOATING MODE: AKTIF (via keyboard)")
+            noMobCount = 0
+            searchCooldown = SEARCH_DELAY_NORMAL
+            lastSearchTime = 0
+            findNewTarget()
+            
+            if updateGUIFunc then
+                updateGUIFunc()
+            end
+        end
+    end)
 end)
 
 -- LOOP UTAMA
 runService.Heartbeat:Connect(function()
-    if not character or not humanoidRootPart then
-        if player.Character then
-            updateCharacter()
+    pcall(function()
+        if not character or not humanoidRootPart then
+            if player.Character then
+                updateCharacter()
+            end
+            return
         end
-        return
-    end
-    
-    if not floatingActive then return end
-    
-    if not currentTarget then
-        findNewTarget()
-        return
-    end
-    
-    if not isMobAlive(currentTarget) then
-        currentTarget = nil
-        noMobCount = 0
-        searchCooldown = SEARCH_DELAY_NORMAL
-        return
-    end
-    
-    floatBehindMob(currentTarget)
-    
-    if updateGUIFunc then
-        updateGUIFunc()
-    end
-    
-    wait(0.1)
+        
+        if not floatingActive then return end
+        
+        if not currentTarget then
+            findNewTarget()
+            return
+        end
+        
+        if not isMobAlive(currentTarget) then
+            currentTarget = nil
+            noMobCount = 0
+            searchCooldown = SEARCH_DELAY_NORMAL
+            return
+        end
+        
+        floatBehindMob(currentTarget)
+        
+        if updateGUIFunc then
+            updateGUIFunc()
+        end
+        
+        wait(0.1)
+    end)
 end)
 
 -- Inisialisasi awal
 updateCharacter()
 
--- Buat GUI
-local updateGUIFunc = createGUI()
+-- Buat GUI (SETELAH semua fungsi didefinisikan)
+updateGUIFunc = createGUI()
 
 print("=================================")
 print("✅ RPG Grinder - FLOATING MODE")
-print("    + GUI LENGKAP")
+print("    + GUI LENGKAP (FIX ERROR)")
 print("=================================")
 print("🎯 Semua fitur bisa diakses via GUI")
 print("🖱️ Klik dan drag untuk atur jarak")
