@@ -128,20 +128,25 @@ local function findNewTarget()
     else
         -- Tidak ada mob ditemukan
         noMobCount = noMobCount + 1
-    
-    print("🔍 Mencari target baru...")
-    local mob = getNearestMob(getgenv().TeleportRange or 50)
-    
-    if mob then
-        currentTarget = mob
-        floatBehindMob(currentTarget)
-        print("✅ Target baru:", currentTarget.model.Name, 
-              "| HP:", math.floor(currentTarget.humanoid.Health))
-    else
-        print("❌ Tidak ada mob di sekitar")
+        
+        -- Atur cooldown berdasarkan seberapa sering tidak ada mob
+        if noMobCount >= MAX_NO_MOB_COUNT then
+            searchCooldown = 5  -- Cooldown panjang (5 detik)
+            if noMobCount == MAX_NO_MOB_COUNT then
+                print("⚠️ Tidak ada mob dalam waktu lama")
+                print("⏱️ Mode hemat energi: Cari setiap 5 detik")
+            end
+        else
+            searchCooldown = 1  -- Cooldown sedang (1 detik)
+        end
+        
+        print("❌ Tidak ada mob di sekitar (", noMobCount, "x )")
         currentTarget = nil
     end
+    
+    lastSearchTime = currentTime
 end
+
 
 -- FUNGSI: Reset posisi
 local function resetPosition()
@@ -306,4 +311,5 @@ print("2. Jika mati, auto respawn dan lanjut")
 print("3. Pindah target hanya saat mob MATI")
 print("4. Atur jarak dengan +/-")
 print("=================================")
+
 
