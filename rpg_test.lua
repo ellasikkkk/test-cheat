@@ -61,6 +61,27 @@ local function floatAboveMob(mob)
           "| Mode: Default (Menghadap ke bawah)")
 end
 
+local function isMobAlive(mob)
+    if not mob then return false end
+    if not mob.model or not mob.model.Parent then return false end
+    if not mob.humanoid or mob.humanoid.Health <= 0 then return false end
+    return true
+end
+
+-- CEK APAKAH MOB MASIH HIDUP
+if not isMobAlive(currentTarget) then
+    print("💀 Target telah MATI! Mencari target baru...")
+    currentTarget = nil
+    findNewTarget()
+    return
+end
+
+if healthChanged then
+    print("📊 HP", currentTarget.model.Name, ":", 
+          math.floor(currentHealth), "/", 
+          math.floor(currentTarget.lastHealth))
+end
+
 -- FUNGSI: Reset rotasi ke normal
 local function resetRotation()
     local currentPos = humanoidRootPart.Position
@@ -216,3 +237,4 @@ print("=================================")
 print("📢 Catatan: Mode rotasi default sudah bekerja!")
 print("   Saat tekan F, karakter langsung menghadap ke bawah")
 print("=================================")
+
