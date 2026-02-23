@@ -1,20 +1,28 @@
--- Script Utama RPG Grinder - FLOATING MODE + GUI LENGKAP
--- Dengan multi-filter (bisa pilih banyak nama mob)
+-- Script Utama RPG Grinder - FLOATING MODE + AUTO ATTACK
+-- Dengan radius auto attack yang bisa diatur
 
 local player = game.Players.LocalPlayer
 local userInputService = game:GetService("UserInputService")
 local runService = game:GetService("RunService")
 local players = game:GetService("Players")
 local tweenService = game:GetService("TweenService")
+local replicatedStorage = game:GetService("ReplicatedStorage")
 
 -- VARIABEL GLOBAL
 local floatingActive = false
+local autoAttackActive = false  -- Fitur auto attack
 local currentTarget = nil
 local floatDistance = 5
-local searchRadius = 50
-local targetMobFilters = {}  -- Table untuk menyimpan banyak filter
+local searchRadius = 50  -- Radius pencarian mob
+local attackRadius = 15   -- Radius serangan (default 15, bisa diatur)
+local targetMobFilters = {}
 local character = nil
 local humanoidRootPart = nil
+
+-- VARIABEL UNTUK AUTO ATTACK
+local attackCooldown = 0
+local lastAttackTime = 0
+local attackSpeed = 0.3  -- Kecepatan serangan (detik)
 
 -- VARIABEL ANTI-LAG
 local searchCooldown = 0
@@ -58,42 +66,31 @@ end
 -- FUNGSI: Parse string filter menjadi table
 local function parseFilters(filterString)
     local filters = {}
-    if filterString == "" then
-        return filters  -- Kosong = semua mob
-    end
+    if filterString == "" then return filters end
     
-    -- Pisahkan dengan koma
     for word in string.gmatch(filterString, "([^,]+)") do
-        -- Hapus spasi di awal dan akhir
         local trimmed = word:match("^%s*(.-)%s*$")
         if trimmed and trimmed ~= "" then
             table.insert(filters, string.lower(trimmed))
         end
     end
-    
     return filters
 end
 
--- FUNGSI: Cek apakah mob sesuai dengan salah satu filter
+-- FUNGSI: Cek apakah mob sesuai filter
 local function isMobNameMatch(mobName)
-    -- Jika tidak ada filter, terima semua mob
-    if #targetMobFilters == 0 then 
-        return true 
-    end
+    if #targetMobFilters == 0 then return true end
     
     local lowerName = string.lower(mobName)
-    
-    -- Cek apakah nama mob mengandung salah satu filter
     for _, filter in ipairs(targetMobFilters) do
         if string.find(lowerName, filter) then
             return true
         end
     end
-    
     return false
 end
 
--- FUNGSI: Mendapatkan mob terdekat (dengan multi-filter)
+-- FUNGSI: Mendapatkan mob terdekat
 local function getNearestMob()
     if not humanoidRootPart then return nil end
     
@@ -115,7 +112,6 @@ local function getNearestMob()
         local obj = part.Parent
         if obj and obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
             
-            -- CEK MULTI-FILTER
             if not isMobNameMatch(obj.Name) then
                 continue
             end
@@ -142,11 +138,56 @@ local function getNearestMob()
     return nearestMob
 end
 
+-- FUNGSI: Mendapatkan semua mob dalam radius (untuk auto attack)
+local function getMobsInRange(range)
+    if not humanoidRootPart then return {} end
+    
+    local mobsInRange = {}
+    local playerPos = humanoidRootPart.Position
+    
+    local region = Region3.new(
+        playerPos - Vector3.new(range, range, range),
+        playerPos + Vector3.new(range, range, range)
+    )
+    
+    local parts = {}
+    pcall(function()
+        parts = workspace:FindPartsInRegion3(region, nil, 100)
+    end)
+    
+    for _, part in ipairs(parts) do
+        local obj = part.Parent
+        if obj and obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
+            
+            if not isMobNameMatch(obj.Name) then
+                continue
+            end
+            
+            local mobRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
+            if mobRoot then
+                local humanoid = obj:FindFirstChild("Humanoid")
+                if humanoid and humanoid.Health > 0 then
+                    local distance = (playerPos - mobRoot.Position).Magnitude
+                    if distance <= range then
+                        table.insert(mobsInRange, {
+                            model = obj,
+                            rootPart = mobRoot,
+                            humanoid = humanoid
+                        })
+                    end
+                end
+            end
+        end
+    end
+    
+    return mobsInRange
+end
+
 -- FUNGSI: Teleport ke BELAKANG mob
 local function floatBehindMob(mob)
     if not mob or not mob.rootPart or not humanoidRootPart then return end
     
-    local success, result = pcall(function()
+    pcall(function()
         local mobPosition = mob.rootPart.Position
         local mobDirection = mob.rootPart.CFrame.LookVector
         local behindPosition = mobPosition - (mobDirection * floatDistance)
@@ -154,6 +195,46 @@ local function floatBehindMob(mob)
         local lookAtMob = CFrame.lookAt(behindPosition, mobPosition)
         humanoidRootPart.CFrame = lookAtMob
     end)
+end
+
+-- FUNGSI: Auto Attack - Menyerang mob dalam radius
+local function autoAttack()
+    if not autoAttackActive or not floatingActive then return end
+    if not humanoidRootPart then return end
+    
+    local currentTime = tick()
+    if currentTime - lastAttackTime < attackCooldown then
+        return  -- Masih cooldown
+    end
+    
+    -- Dapatkan semua mob dalam radius serangan
+    local mobs = getMobsInRange(attackRadius)
+    
+    for _, mob in ipairs(mobs) do
+        if mob and mob.humanoid and mob.humanoid.Health > 0 then
+            -- METODE 1: Langsung kurangi health
+            mob.humanoid.Health = mob.humanoid.Health - 25  -- Damage 25
+            
+            -- METODE 2: Gunakan :TakeDamage() jika tersedia
+            -- pcall(function()
+            --     mob.humanoid:TakeDamage(30)
+            -- end)
+            
+            -- METODE 3: Cari remote event untuk attack (untuk game tertentu)
+            -- pcall(function()
+            --     for _, remote in ipairs(replicatedStorage:GetChildren()) do
+            --         if remote:IsA("RemoteEvent") and remote.Name:lower():find("attack") then
+            --             remote:FireServer(mob.model)
+            --             break
+            --         end
+            --     end
+            -- end)
+            
+            print("⚔️ Auto Attack:", mob.model.Name, "HP:", math.floor(mob.humanoid.Health))
+        end
+    end
+    
+    lastAttackTime = currentTime
 end
 
 -- FUNGSI: Cek apakah mob masih hidup
@@ -171,11 +252,9 @@ local function isMobAlive(mob)
     return true
 end
 
--- FUNGSI: Cari target baru (dengan multi-filter)
+-- FUNGSI: Cari target baru
 local function findNewTarget()
-    if not humanoidRootPart then 
-        return 
-    end
+    if not humanoidRootPart then return end
     
     local currentTime = tick()
     if currentTime - lastSearchTime < searchCooldown then
@@ -190,7 +269,6 @@ local function findNewTarget()
         currentTarget = mob
         floatBehindMob(currentTarget)
         
-        -- Tampilkan info target
         local filterInfo = ""
         if #targetMobFilters > 0 then
             filterInfo = " (filter: " .. table.concat(targetMobFilters, ", ") .. ")"
@@ -222,7 +300,7 @@ local function resetPosition()
 end
 
 -- =============================================
--- MEMBUAT GUI LENGKAP DENGAN MULTI-FILTER
+-- MEMBUAT GUI LENGKAP DENGAN AUTO ATTACK
 -- =============================================
 
 local function createGUI()
@@ -242,11 +320,11 @@ local function createGUI()
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.Parent = player.PlayerGui
     
-    -- Frame utama (lebih lebar untuk multi-filter)
+    -- Frame utama
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 380, 0, 600)
-    mainFrame.Position = UDim2.new(0, 20, 0.5, -300)
+    mainFrame.Size = UDim2.new(0, 400, 0, 700)  -- Lebih besar untuk fitur baru
+    mainFrame.Position = UDim2.new(0, 20, 0.5, -350)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
     mainFrame.BackgroundTransparency = 0.1
     mainFrame.BorderSizePixel = 0
@@ -265,7 +343,7 @@ local function createGUI()
     titleText.Size = UDim2.new(1, -40, 1, 0)
     titleText.Position = UDim2.new(0, 10, 0, 0)
     titleText.BackgroundTransparency = 1
-    titleText.Text = "⚡ RPG GRINDER - MULTI FILTER"
+    titleText.Text = "⚡ RPG GRINDER - AUTO ATTACK"
     titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleText.TextXAlignment = Enum.TextXAlignment.Left
     titleText.Font = Enum.Font.GothamBold
@@ -294,7 +372,7 @@ local function createGUI()
     contentFrame.BackgroundTransparency = 1
     contentFrame.BorderSizePixel = 0
     contentFrame.ScrollBarThickness = 6
-    contentFrame.CanvasSize = UDim2.new(0, 0, 0, 750)
+    contentFrame.CanvasSize = UDim2.new(0, 0, 0, 900)
     contentFrame.Parent = mainFrame
     
     local yPos = 5
@@ -314,7 +392,7 @@ local function createGUI()
     statusLabel.Parent = contentFrame
     yPos = yPos + 30
     
-    -- Status ON/OFF
+    -- Status Floating Mode
     local statusFrame = Instance.new("Frame")
     statusFrame.Size = UDim2.new(1, 0, 0, 40)
     statusFrame.Position = UDim2.new(0, 0, 0, yPos)
@@ -343,21 +421,65 @@ local function createGUI()
     statusValue.Font = Enum.Font.GothamBold
     statusValue.TextSize = 14
     statusValue.Parent = statusFrame
+    yPos = yPos + 45
     
-    -- Tombol Toggle
-    local toggleBtn = Instance.new("TextButton")
-    toggleBtn.Size = UDim2.new(1, -20, 0, 35)
-    toggleBtn.Position = UDim2.new(0, 10, 0, yPos + 45)
-    toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-    toggleBtn.Text = "🔘 AKTIFKAN FLOATING MODE"
-    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    toggleBtn.Font = Enum.Font.GothamBold
-    toggleBtn.TextSize = 14
-    toggleBtn.Parent = contentFrame
-    yPos = yPos + 90
+    -- Status Auto Attack
+    local autoAttackFrame = Instance.new("Frame")
+    autoAttackFrame.Size = UDim2.new(1, 0, 0, 40)
+    autoAttackFrame.Position = UDim2.new(0, 0, 0, yPos)
+    autoAttackFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    autoAttackFrame.BorderSizePixel = 0
+    autoAttackFrame.Parent = contentFrame
+    
+    local autoAttackText = Instance.new("TextLabel")
+    autoAttackText.Size = UDim2.new(0.5, -5, 1, 0)
+    autoAttackText.Position = UDim2.new(0, 10, 0, 0)
+    autoAttackText.BackgroundTransparency = 1
+    autoAttackText.Text = "Auto Attack:"
+    autoAttackText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    autoAttackText.TextXAlignment = Enum.TextXAlignment.Left
+    autoAttackText.Font = Enum.Font.Gotham
+    autoAttackText.TextSize = 14
+    autoAttackText.Parent = autoAttackFrame
+    
+    local autoAttackValue = Instance.new("TextLabel")
+    autoAttackValue.Size = UDim2.new(0.5, -5, 1, 0)
+    autoAttackValue.Position = UDim2.new(0.5, 5, 0, 0)
+    autoAttackValue.BackgroundTransparency = 1
+    autoAttackValue.Text = "OFF"
+    autoAttackValue.TextColor3 = Color3.fromRGB(255, 100, 100)
+    autoAttackValue.TextXAlignment = Enum.TextXAlignment.Right
+    autoAttackValue.Font = Enum.Font.GothamBold
+    autoAttackValue.TextSize = 14
+    autoAttackValue.Parent = autoAttackFrame
+    yPos = yPos + 45
+    
+    -- Tombol Toggle Floating
+    local toggleFloatBtn = Instance.new("TextButton")
+    toggleFloatBtn.Size = UDim2.new(1, -20, 0, 35)
+    toggleFloatBtn.Position = UDim2.new(0, 10, 0, yPos)
+    toggleFloatBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    toggleFloatBtn.Text = "🔘 AKTIFKAN FLOATING MODE"
+    toggleFloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleFloatBtn.Font = Enum.Font.GothamBold
+    toggleFloatBtn.TextSize = 14
+    toggleFloatBtn.Parent = contentFrame
+    yPos = yPos + 40
+    
+    -- Tombol Toggle Auto Attack
+    local toggleAttackBtn = Instance.new("TextButton")
+    toggleAttackBtn.Size = UDim2.new(1, -20, 0, 35)
+    toggleAttackBtn.Position = UDim2.new(0, 10, 0, yPos)
+    toggleAttackBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 100)
+    toggleAttackBtn.Text = "⚔️ AKTIFKAN AUTO ATTACK"
+    toggleAttackBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleAttackBtn.Font = Enum.Font.GothamBold
+    toggleAttackBtn.TextSize = 14
+    toggleAttackBtn.Parent = contentFrame
+    yPos = yPos + 45
     
     -- =========================================
-    -- SECTION: MULTI-FILTER (FITUR BARU)
+    -- SECTION: MULTI-FILTER
     -- =========================================
     local filterLabel = Instance.new("TextLabel")
     filterLabel.Size = UDim2.new(1, 0, 0, 25)
@@ -389,7 +511,6 @@ local function createGUI()
     filterDesc.TextSize = 12
     filterDesc.Parent = filterFrame
     
-    -- TextBox untuk input multi-filter
     local nameInput = Instance.new("TextBox")
     nameInput.Size = UDim2.new(1, -30, 0, 30)
     nameInput.Position = UDim2.new(0, 15, 0, 30)
@@ -403,7 +524,6 @@ local function createGUI()
     nameInput.ClearTextOnFocus = false
     nameInput.Parent = filterFrame
     
-    -- Tombol Apply Filter
     local applyFilterBtn = Instance.new("TextButton")
     applyFilterBtn.Size = UDim2.new(0.5, -15, 0, 25)
     applyFilterBtn.Position = UDim2.new(0, 15, 0, 65)
@@ -414,17 +534,15 @@ local function createGUI()
     applyFilterBtn.TextSize = 12
     applyFilterBtn.Parent = filterFrame
     
-    -- Tombol Reset Filter
     local resetFilterBtn = Instance.new("TextButton")
     resetFilterBtn.Size = UDim2.new(0.5, -15, 0, 25)
     resetFilterBtn.Position = UDim2.new(0.5, 5, 0, 65)
     resetFilterBtn.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
-    resetFilterBtn.Text = "RESET FILTER (Semua Mob)"
+    resetFilterBtn.Text = "RESET FILTER"
     resetFilterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     resetFilterBtn.Font = Enum.Font.GothamBold
-    resetFilterBtn.TextSize = 10
+    resetFilterBtn.TextSize = 12
     resetFilterBtn.Parent = filterFrame
-    
     yPos = yPos + 110
     
     -- =========================================
@@ -482,7 +600,6 @@ local function createGUI()
     targetDistLabel.TextSize = 13
     targetDistLabel.Parent = targetFrame
     
-    -- Info filter aktif
     local activeFilterLabel = Instance.new("TextLabel")
     activeFilterLabel.Size = UDim2.new(1, -20, 0, 30)
     activeFilterLabel.Position = UDim2.new(0, 10, 0, 70)
@@ -519,21 +636,125 @@ local function createGUI()
     yPos = yPos + 45
     
     -- =========================================
-    -- SECTION: PENGATURAN JARAK
+    -- SECTION: PENGATURAN RADIUS
     -- =========================================
-    local settingLabel = Instance.new("TextLabel")
-    settingLabel.Size = UDim2.new(1, 0, 0, 25)
-    settingLabel.Position = UDim2.new(0, 0, 0, yPos)
-    settingLabel.BackgroundTransparency = 1
-    settingLabel.Text = "⚙️ PENGATURAN JARAK"
-    settingLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
-    settingLabel.TextXAlignment = Enum.TextXAlignment.Left
-    settingLabel.Font = Enum.Font.GothamBold
-    settingLabel.TextSize = 14
-    settingLabel.Parent = contentFrame
+    local radiusLabel = Instance.new("TextLabel")
+    radiusLabel.Size = UDim2.new(1, 0, 0, 25)
+    radiusLabel.Position = UDim2.new(0, 0, 0, yPos)
+    radiusLabel.BackgroundTransparency = 1
+    radiusLabel.Text = "📡 PENGATURAN RADIUS"
+    radiusLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+    radiusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    radiusLabel.Font = Enum.Font.GothamBold
+    radiusLabel.TextSize = 14
+    radiusLabel.Parent = contentFrame
     yPos = yPos + 30
     
-    -- Slider Jarak Belakang
+    -- Slider Radius Pencarian Mob (20-150)
+    local searchRadiusFrame = Instance.new("Frame")
+    searchRadiusFrame.Size = UDim2.new(1, 0, 0, 50)
+    searchRadiusFrame.Position = UDim2.new(0, 0, 0, yPos)
+    searchRadiusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    searchRadiusFrame.BorderSizePixel = 0
+    searchRadiusFrame.Parent = contentFrame
+    
+    local searchRadiusText = Instance.new("TextLabel")
+    searchRadiusText.Size = UDim2.new(0.5, -5, 0, 25)
+    searchRadiusText.Position = UDim2.new(0, 10, 0, 5)
+    searchRadiusText.BackgroundTransparency = 1
+    searchRadiusText.Text = "Radius Pencarian:"
+    searchRadiusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    searchRadiusText.TextXAlignment = Enum.TextXAlignment.Left
+    searchRadiusText.Font = Enum.Font.Gotham
+    searchRadiusText.TextSize = 13
+    searchRadiusText.Parent = searchRadiusFrame
+    
+    local searchRadiusValue = Instance.new("TextLabel")
+    searchRadiusValue.Size = UDim2.new(0.2, 0, 0, 25)
+    searchRadiusValue.Position = UDim2.new(0.8, -20, 0, 5)
+    searchRadiusValue.BackgroundTransparency = 1
+    searchRadiusValue.Text = searchRadius .. "m"
+    searchRadiusValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+    searchRadiusValue.TextXAlignment = Enum.TextXAlignment.Right
+    searchRadiusValue.Font = Enum.Font.GothamBold
+    searchRadiusValue.TextSize = 14
+    searchRadiusValue.Parent = searchRadiusFrame
+    
+    local searchSliderBg = Instance.new("Frame")
+    searchSliderBg.Size = UDim2.new(0.6, -10, 0, 10)
+    searchSliderBg.Position = UDim2.new(0.4, 5, 0, 35)
+    searchSliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    searchSliderBg.BorderSizePixel = 0
+    searchSliderBg.Parent = searchRadiusFrame
+    
+    local searchSliderFill = Instance.new("Frame")
+    searchSliderFill.Size = UDim2.new((searchRadius - 20) / 130, 0, 1, 0)  -- Range 20-150
+    searchSliderFill.BackgroundColor3 = Color3.fromRGB(100, 200, 255)
+    searchSliderFill.BorderSizePixel = 0
+    searchSliderFill.Parent = searchSliderBg
+    
+    local searchSliderButton = Instance.new("TextButton")
+    searchSliderButton.Size = UDim2.new(0, 20, 0, 20)
+    searchSliderButton.Position = UDim2.new((searchRadius - 20) / 130, -10, 0.5, -10)
+    searchSliderButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    searchSliderButton.Text = ""
+    searchSliderButton.BorderSizePixel = 0
+    searchSliderButton.Parent = searchSliderBg
+    yPos = yPos + 60
+    
+    -- Slider Radius Auto Attack (5-50)
+    local attackRadiusFrame = Instance.new("Frame")
+    attackRadiusFrame.Size = UDim2.new(1, 0, 0, 50)
+    attackRadiusFrame.Position = UDim2.new(0, 0, 0, yPos)
+    attackRadiusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    attackRadiusFrame.BorderSizePixel = 0
+    attackRadiusFrame.Parent = contentFrame
+    
+    local attackRadiusText = Instance.new("TextLabel")
+    attackRadiusText.Size = UDim2.new(0.5, -5, 0, 25)
+    attackRadiusText.Position = UDim2.new(0, 10, 0, 5)
+    attackRadiusText.BackgroundTransparency = 1
+    attackRadiusText.Text = "Radius Auto Attack:"
+    attackRadiusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    attackRadiusText.TextXAlignment = Enum.TextXAlignment.Left
+    attackRadiusText.Font = Enum.Font.Gotham
+    attackRadiusText.TextSize = 13
+    attackRadiusText.Parent = attackRadiusFrame
+    
+    local attackRadiusValue = Instance.new("TextLabel")
+    attackRadiusValue.Size = UDim2.new(0.2, 0, 0, 25)
+    attackRadiusValue.Position = UDim2.new(0.8, -20, 0, 5)
+    attackRadiusValue.BackgroundTransparency = 1
+    attackRadiusValue.Text = attackRadius .. "m"
+    attackRadiusValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+    attackRadiusValue.TextXAlignment = Enum.TextXAlignment.Right
+    attackRadiusValue.Font = Enum.Font.GothamBold
+    attackRadiusValue.TextSize = 14
+    attackRadiusValue.Parent = attackRadiusFrame
+    
+    local attackSliderBg = Instance.new("Frame")
+    attackSliderBg.Size = UDim2.new(0.6, -10, 0, 10)
+    attackSliderBg.Position = UDim2.new(0.4, 5, 0, 35)
+    attackSliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    attackSliderBg.BorderSizePixel = 0
+    attackSliderBg.Parent = attackRadiusFrame
+    
+    local attackSliderFill = Instance.new("Frame")
+    attackSliderFill.Size = UDim2.new((attackRadius - 5) / 45, 0, 1, 0)  -- Range 5-50
+    attackSliderFill.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+    attackSliderFill.BorderSizePixel = 0
+    attackSliderFill.Parent = attackSliderBg
+    
+    local attackSliderButton = Instance.new("TextButton")
+    attackSliderButton.Size = UDim2.new(0, 20, 0, 20)
+    attackSliderButton.Position = UDim2.new((attackRadius - 5) / 45, -10, 0.5, -10)
+    attackSliderButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    attackSliderButton.Text = ""
+    attackSliderButton.BorderSizePixel = 0
+    attackSliderButton.Parent = attackSliderBg
+    yPos = yPos + 60
+    
+    -- Slider Jarak Belakang (2-15)
     local distanceFrame = Instance.new("Frame")
     distanceFrame.Size = UDim2.new(1, 0, 0, 50)
     distanceFrame.Position = UDim2.new(0, 0, 0, yPos)
@@ -542,7 +763,7 @@ local function createGUI()
     distanceFrame.Parent = contentFrame
     
     local distanceText = Instance.new("TextLabel")
-    distanceText.Size = UDim2.new(0.4, -5, 0, 25)
+    distanceText.Size = UDim2.new(0.5, -5, 0, 25)
     distanceText.Position = UDim2.new(0, 10, 0, 5)
     distanceText.BackgroundTransparency = 1
     distanceText.Text = "Jarak Belakang:"
@@ -563,92 +784,26 @@ local function createGUI()
     distanceValue.TextSize = 14
     distanceValue.Parent = distanceFrame
     
-    local sliderBg = Instance.new("Frame")
-    sliderBg.Size = UDim2.new(0.6, -10, 0, 10)
-    sliderBg.Position = UDim2.new(0.4, 5, 0, 35)
-    sliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-    sliderBg.BorderSizePixel = 0
-    sliderBg.Parent = distanceFrame
+    local distanceSliderBg = Instance.new("Frame")
+    distanceSliderBg.Size = UDim2.new(0.6, -10, 0, 10)
+    distanceSliderBg.Position = UDim2.new(0.4, 5, 0, 35)
+    distanceSliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    distanceSliderBg.BorderSizePixel = 0
+    distanceSliderBg.Parent = distanceFrame
     
-    local sliderFill = Instance.new("Frame")
-    sliderFill.Size = UDim2.new((floatDistance - 2) / 13, 0, 1, 0)
-    sliderFill.BackgroundColor3 = Color3.fromRGB(100, 200, 255)
-    sliderFill.BorderSizePixel = 0
-    sliderFill.Parent = sliderBg
+    local distanceSliderFill = Instance.new("Frame")
+    distanceSliderFill.Size = UDim2.new((floatDistance - 2) / 13, 0, 1, 0)
+    distanceSliderFill.BackgroundColor3 = Color3.fromRGB(100, 200, 255)
+    distanceSliderFill.BorderSizePixel = 0
+    distanceSliderFill.Parent = distanceSliderBg
     
-    local sliderButton = Instance.new("TextButton")
-    sliderButton.Size = UDim2.new(0, 20, 0, 20)
-    sliderButton.Position = UDim2.new((floatDistance - 2) / 13, -10, 0.5, -10)
-    sliderButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    sliderButton.Text = ""
-    sliderButton.BorderSizePixel = 0
-    sliderButton.Parent = sliderBg
-    yPos = yPos + 60
-    
-    -- =========================================
-    -- SECTION: RADIUS PENCARIAN
-    -- =========================================
-    local radiusLabel = Instance.new("TextLabel")
-    radiusLabel.Size = UDim2.new(1, 0, 0, 25)
-    radiusLabel.Position = UDim2.new(0, 0, 0, yPos)
-    radiusLabel.BackgroundTransparency = 1
-    radiusLabel.Text = "📡 RADIUS PENCARIAN"
-    radiusLabel.TextColor3 = Color3.fromRGB(100, 255, 200)
-    radiusLabel.TextXAlignment = Enum.TextXAlignment.Left
-    radiusLabel.Font = Enum.Font.GothamBold
-    radiusLabel.TextSize = 14
-    radiusLabel.Parent = contentFrame
-    yPos = yPos + 30
-    
-    local radiusFrame = Instance.new("Frame")
-    radiusFrame.Size = UDim2.new(1, 0, 0, 50)
-    radiusFrame.Position = UDim2.new(0, 0, 0, yPos)
-    radiusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-    radiusFrame.BorderSizePixel = 0
-    radiusFrame.Parent = contentFrame
-    
-    local radiusText = Instance.new("TextLabel")
-    radiusText.Size = UDim2.new(0.4, -5, 0, 25)
-    radiusText.Position = UDim2.new(0, 10, 0, 5)
-    radiusText.BackgroundTransparency = 1
-    radiusText.Text = "Radius:"
-    radiusText.TextColor3 = Color3.fromRGB(200, 200, 200)
-    radiusText.TextXAlignment = Enum.TextXAlignment.Left
-    radiusText.Font = Enum.Font.Gotham
-    radiusText.TextSize = 13
-    radiusText.Parent = radiusFrame
-    
-    local radiusValue = Instance.new("TextLabel")
-    radiusValue.Size = UDim2.new(0.2, 0, 0, 25)
-    radiusValue.Position = UDim2.new(0.8, -20, 0, 5)
-    radiusValue.BackgroundTransparency = 1
-    radiusValue.Text = searchRadius .. "m"
-    radiusValue.TextColor3 = Color3.fromRGB(255, 255, 255)
-    radiusValue.TextXAlignment = Enum.TextXAlignment.Right
-    radiusValue.Font = Enum.Font.GothamBold
-    radiusValue.TextSize = 14
-    radiusValue.Parent = radiusFrame
-    
-    local radiusSliderBg = Instance.new("Frame")
-    radiusSliderBg.Size = UDim2.new(0.6, -10, 0, 10)
-    radiusSliderBg.Position = UDim2.new(0.4, 5, 0, 35)
-    radiusSliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-    radiusSliderBg.BorderSizePixel = 0
-    radiusSliderBg.Parent = radiusFrame
-    
-    local radiusSliderFill = Instance.new("Frame")
-    radiusSliderFill.Size = UDim2.new((searchRadius - 20) / 80, 0, 1, 0)
-    radiusSliderFill.BackgroundColor3 = Color3.fromRGB(255, 150, 100)
-    radiusSliderFill.BorderSizePixel = 0
-    radiusSliderFill.Parent = radiusSliderBg
-    
-    local radiusSliderButton = Instance.new("TextButton")
-    radiusSliderButton.Size = UDim2.new(0, 20, 0, 20)
-    radiusSliderButton.Position = UDim2.new((searchRadius - 20) / 80, -10, 0.5, -10)
-    radiusSliderButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    radiusSliderButton.Text = ""
-    radiusSliderButton.BorderSizePixel = 0
-    radiusSliderButton.Parent = radiusSliderBg
+    local distanceSliderButton = Instance.new("TextButton")
+    distanceSliderButton.Size = UDim2.new(0, 20, 0, 20)
+    distanceSliderButton.Position = UDim2.new((floatDistance - 2) / 13, -10, 0.5, -10)
+    distanceSliderButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    distanceSliderButton.Text = ""
+    distanceSliderButton.BorderSizePixel = 0
+    distanceSliderButton.Parent = distanceSliderBg
     yPos = yPos + 60
     
     -- =========================================
@@ -702,17 +857,30 @@ local function createGUI()
     -- FUNGSI UPDATE GUI
     -- =========================================
     local function updateGUI()
-        -- Update status
+        -- Update status floating
         if floatingActive then
             statusValue.Text = "ON"
             statusValue.TextColor3 = Color3.fromRGB(100, 255, 100)
-            toggleBtn.Text = "🔴 MATIKAN FLOATING MODE"
-            toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+            toggleFloatBtn.Text = "🔴 MATIKAN FLOATING MODE"
+            toggleFloatBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
         else
             statusValue.Text = "OFF"
             statusValue.TextColor3 = Color3.fromRGB(255, 100, 100)
-            toggleBtn.Text = "🟢 AKTIFKAN FLOATING MODE"
-            toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+            toggleFloatBtn.Text = "🟢 AKTIFKAN FLOATING MODE"
+            toggleFloatBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+        end
+        
+        -- Update status auto attack
+        if autoAttackActive then
+            autoAttackValue.Text = "ON"
+            autoAttackValue.TextColor3 = Color3.fromRGB(100, 255, 100)
+            toggleAttackBtn.Text = "⚔️ MATIKAN AUTO ATTACK"
+            toggleAttackBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+        else
+            autoAttackValue.Text = "OFF"
+            autoAttackValue.TextColor3 = Color3.fromRGB(255, 100, 100)
+            toggleAttackBtn.Text = "⚔️ AKTIFKAN AUTO ATTACK"
+            toggleAttackBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 200)
         end
         
         -- Update target info
@@ -736,17 +904,23 @@ local function createGUI()
             activeFilterLabel.Text = "Filter aktif: " .. table.concat(targetMobFilters, ", ")
         end
         
-        -- Update jarak belakang
+        -- Update radius values
+        searchRadiusValue.Text = searchRadius .. "m"
+        attackRadiusValue.Text = attackRadius .. "m"
         distanceValue.Text = floatDistance .. "m"
-        local fillPercent = (floatDistance - 2) / 13
-        sliderFill.Size = UDim2.new(fillPercent, 0, 1, 0)
-        sliderButton.Position = UDim2.new(fillPercent, -10, 0.5, -10)
         
-        -- Update radius
-        radiusValue.Text = searchRadius .. "m"
-        local radiusPercent = (searchRadius - 20) / 80
-        radiusSliderFill.Size = UDim2.new(radiusPercent, 0, 1, 0)
-        radiusSliderButton.Position = UDim2.new(radiusPercent, -10, 0.5, -10)
+        -- Update slider positions
+        local searchPercent = (searchRadius - 20) / 130
+        searchSliderFill.Size = UDim2.new(searchPercent, 0, 1, 0)
+        searchSliderButton.Position = UDim2.new(searchPercent, -10, 0.5, -10)
+        
+        local attackPercent = (attackRadius - 5) / 45
+        attackSliderFill.Size = UDim2.new(attackPercent, 0, 1, 0)
+        attackSliderButton.Position = UDim2.new(attackPercent, -10, 0.5, -10)
+        
+        local distPercent = (floatDistance - 2) / 13
+        distanceSliderFill.Size = UDim2.new(distPercent, 0, 1, 0)
+        distanceSliderButton.Position = UDim2.new(distPercent, -10, 0.5, -10)
         
         -- Update anti-lag info
         noMobText.Text = "Pencarian Gagal: " .. noMobCount .. "x"
@@ -757,8 +931,8 @@ local function createGUI()
     -- EVENT HANDLER
     -- =========================================
     
-    -- Tombol Toggle
-    toggleBtn.MouseButton1Click:Connect(function()
+    -- Tombol Toggle Floating
+    toggleFloatBtn.MouseButton1Click:Connect(function()
         pcall(function()
             if not character or not humanoidRootPart then
                 waitForCharacter()
@@ -782,7 +956,16 @@ local function createGUI()
         end)
     end)
     
-    -- Tombol Apply Filter (MULTI-FILTER)
+    -- Tombol Toggle Auto Attack
+    toggleAttackBtn.MouseButton1Click:Connect(function()
+        pcall(function()
+            autoAttackActive = not autoAttackActive
+            print("⚔️ AUTO ATTACK:", autoAttackActive and "AKTIF" or "DIMATIKAN")
+            updateGUI()
+        end)
+    end)
+    
+    -- Tombol Apply Filter
     applyFilterBtn.MouseButton1Click:Connect(function()
         pcall(function()
             local filterString = nameInput.Text
@@ -794,7 +977,6 @@ local function createGUI()
                 print("🎯 Multi-Filter: " .. table.concat(targetMobFilters, ", "))
             end
             
-            -- Reset target dan cari ulang dengan filter baru
             if floatingActive then
                 currentTarget = nil
                 noMobCount = 0
@@ -853,33 +1035,78 @@ local function createGUI()
         end)
     end)
     
-    -- Slider jarak belakang
-    local dragging = false
+    -- Slider drag functionality
+    local searchDragging = false
+    local attackDragging = false
+    local distanceDragging = false
     
-    sliderButton.MouseButton1Down:Connect(function()
-        dragging = true
+    searchSliderButton.MouseButton1Down:Connect(function()
+        searchDragging = true
     end)
     
-    -- Slider radius
-    local radiusDragging = false
+    attackSliderButton.MouseButton1Down:Connect(function()
+        attackDragging = true
+    end)
     
-    radiusSliderButton.MouseButton1Down:Connect(function()
-        radiusDragging = true
+    distanceSliderButton.MouseButton1Down:Connect(function()
+        distanceDragging = true
     end)
     
     userInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-            radiusDragging = false
+            searchDragging = false
+            attackDragging = false
+            distanceDragging = false
         end
     end)
     
     userInputService.InputChanged:Connect(function(input)
         pcall(function()
-            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            if searchDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
                 local mousePos = userInputService:GetMouseLocation()
-                local sliderPos = sliderBg.AbsolutePosition
-                local sliderSize = sliderBg.AbsoluteSize.X
+                local sliderPos = searchSliderBg.AbsolutePosition
+                local sliderSize = searchSliderBg.AbsoluteSize.X
+                
+                if sliderSize > 0 then
+                    local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
+                    local percent = relativeX / sliderSize
+                    
+                    searchRadius = math.floor(20 + (percent * 130))
+                    searchRadius = math.clamp(searchRadius, 20, 150)
+                    
+                    print("📡 Radius pencarian:", searchRadius)
+                    
+                    if floatingActive then
+                        currentTarget = nil
+                        lastSearchTime = 0
+                        findNewTarget()
+                    end
+                    
+                    updateGUI()
+                end
+            end
+            
+            if attackDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                local mousePos = userInputService:GetMouseLocation()
+                local sliderPos = attackSliderBg.AbsolutePosition
+                local sliderSize = attackSliderBg.AbsoluteSize.X
+                
+                if sliderSize > 0 then
+                    local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
+                    local percent = relativeX / sliderSize
+                    
+                    attackRadius = math.floor(5 + (percent * 45))
+                    attackRadius = math.clamp(attackRadius, 5, 50)
+                    
+                    print("⚔️ Radius auto attack:", attackRadius)
+                    updateGUI()
+                end
+            end
+            
+            if distanceDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                local mousePos = userInputService:GetMouseLocation()
+                local sliderPos = distanceSliderBg.AbsolutePosition
+                local sliderSize = distanceSliderBg.AbsoluteSize.X
                 
                 if sliderSize > 0 then
                     local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
@@ -890,30 +1117,6 @@ local function createGUI()
                     
                     if floatingActive and currentTarget then
                         floatBehindMob(currentTarget)
-                    end
-                    
-                    updateGUI()
-                end
-            end
-            
-            if radiusDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-                local mousePos = userInputService:GetMouseLocation()
-                local sliderPos = radiusSliderBg.AbsolutePosition
-                local sliderSize = radiusSliderBg.AbsoluteSize.X
-                
-                if sliderSize > 0 then
-                    local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
-                    local percent = relativeX / sliderSize
-                    
-                    searchRadius = math.floor(20 + (percent * 80))
-                    searchRadius = math.clamp(searchRadius, 20, 100)
-                    
-                    print("📡 Radius pencarian:", searchRadius)
-                    
-                    if floatingActive then
-                        currentTarget = nil
-                        lastSearchTime = 0
-                        findNewTarget()
                     end
                     
                     updateGUI()
@@ -973,7 +1176,7 @@ userInputService.InputBegan:Connect(function(input, gameProcessed)
     end)
 end)
 
--- LOOP UTAMA
+-- LOOP UTAMA (Floating + Auto Attack)
 runService.Heartbeat:Connect(function()
     pcall(function()
         if not character or not humanoidRootPart then
@@ -981,6 +1184,11 @@ runService.Heartbeat:Connect(function()
                 updateCharacter()
             end
             return
+        end
+        
+        -- Auto Attack (jalan terus kalau aktif)
+        if autoAttackActive and floatingActive then
+            autoAttack()
         end
         
         if not floatingActive then return end
@@ -1015,16 +1223,16 @@ updateGUIFunc = createGUI()
 
 print("=================================")
 print("✅ RPG Grinder - FLOATING MODE")
-print("    + MULTI-FILTER")
+print("    + AUTO ATTACK")
 print("=================================")
-print("🎯 FITUR MULTI-FILTER:")
-print("   • Bisa pilih banyak mob sekaligus")
-print("   • Pisahkan dengan koma")
-print("   • Contoh: Slime, Goblin, Boss")
+print("🎯 FITUR BARU:")
+print("   • Auto Attack dengan radius 5-50")
+print("   • Radius pencarian 20-150")
+print("   • Multi-filter dengan koma")
 print("=================================")
 print("🖱️ Cara Penggunaan:")
-print("1. Isi: Slime, Goblin, Dragon")
-print("2. Klik TERAPKAN FILTER")
-print("3. Klik AKTIFKAN untuk mulai")
-print("4. Atur radius dengan slider")
+print("1. Atur radius dengan slider")
+print("2. Aktifkan Floating Mode")
+print("3. Aktifkan Auto Attack")
+print("4. Saksikan mob mati otomatis!")
 print("=================================")
