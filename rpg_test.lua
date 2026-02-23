@@ -47,6 +47,9 @@ local function floatAboveMob(mob)
     
     -- Hitung posisi di atas mob
     local targetPos = mob.rootPart.Position + Vector3.new(0, floatHeight, 0)
+
+    -- MENGHADAP BAWAH
+    local lookDownCFrame = CFrame.new(targetPos) * CFrame.Angles(math.rad(-90), 0, 0)
     
     -- Teleport ke atas mob
     humanoidRootPart.CFrame = CFrame.new(targetPos)
@@ -162,3 +165,4 @@ print("=================================")
 print("📍 Fungsi: Karakter mengambang di atas mob")
 print("🖱️ Anda tinggal klik untuk menyerang")
 print("=================================")
+
