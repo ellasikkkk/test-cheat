@@ -1457,7 +1457,45 @@ end)
 
 -- KEYBIND SYSTEM (OPSIONAL)
 
- if input.KeyCode == Enum.KeyCode.D then
+userInputService.InputBegan:Connect(function(input, gameProcessed)
+    pcall(function()
+        if gameProcessed then return end
+        
+        if input.KeyCode == Enum.KeyCode.F then
+            if not character or not humanoidRootPart then
+                waitForCharacter()
+            end
+            
+            floatingActive = not floatingActive
+            
+            if floatingActive then
+                print("🚀 FLOATING MODE: AKTIF (via keyboard)")
+                noMobCount = 0
+                searchCooldown = SEARCH_DELAY_NORMAL
+                lastSearchTime = 0
+                findNewTarget()
+            else
+                print("💤 FLOATING MODE: DIMATIKAN (via keyboard)")
+                resetPosition()
+                currentTarget = nil
+            end
+            
+            if updateGUIFunc then
+                updateGUIFunc()
+            end
+        end
+        
+        if input.KeyCode == Enum.KeyCode.G then
+            killAuraActive = not killAuraActive
+            print("⚔️ KILL AURA:", killAuraActive and "AKTIF" or "DIMATIKAN")
+            
+            if updateGUIFunc then
+                updateGUIFunc()
+            end
+        end
+        
+        -- TAMBAHKAN INI (Tombol D untuk diagnosa)
+        if input.KeyCode == Enum.KeyCode.D then
             diagnoseMobDeath()
         end
     end)
@@ -1530,4 +1568,5 @@ print("⌨️ Keyboard Shortcut:")
 print("F = Toggle Floating Mode")
 print("G = Toggle Kill Aura")
 print("=================================")
+
 
