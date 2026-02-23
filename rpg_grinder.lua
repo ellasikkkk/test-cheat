@@ -1,110 +1,157 @@
--- Script Utama RPG Grinder
--- Jangan diedit langsung, atur melalui konfigurasi di atas
+-- Script Utama RPG Grinder - AUTO FARM RINGAN
+-- Dioptimasi khusus untuk auto farm tanpa lag
 
 local player = game.Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 local userInputService = game:GetService("UserInputService")
-local runService = game:GetService("RunService")
 local players = game:GetService("Players")
 
--- Fungsi untuk mendapatkan mob terdekat
-local function getNearestMob(range)
-    local nearestMob = nil
-    local shortestDistance = range or math.huge
-    
-    for _, obj in pairs(workspace:GetDescendants()) do
-        -- Deteksi mob berdasarkan pola umum (sesuaikan dengan game guru Anda)
-        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
-            local mobRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
-            if mobRoot then
-                local distance = (humanoidRootPart.Position - mobRoot.Position).Magnitude
-                if distance < shortestDistance then
-                    shortestDistance = distance
-                    nearestMob = obj
-                end
-            end
-        end
-    end
-    return nearestMob, shortestDistance
-end
+-- VARIABEL KONTROL
+local autoFarmActive = false
+local killCooldown = 0
+local mobList = {}  -- Daftar mob yang sudah ditemukan
 
--- Fungsi Kill Aura
-local function killAura()
-    if not getgenv().KillAura then return end
+-- FUNGSI: Cari mob dengan metode sangat ringan
+local function scanMobs()
+    -- Hanya scan jika auto farm aktif
+    if not autoFarmActive then return end
     
-    local range = getgenv().KillAuraRange or 30
-    for _, obj in pairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") then
-            -- Skip player jika TargetMobsOnly true
-            if getgenv().TargetMobsOnly and players:GetPlayerFromCharacter(obj) then
-                continue
-            end
+    local currentTime = tick()
+    local range = getgenv().KillAuraRange or 25
+    local playerPos = humanoidRootPart.Position
+    
+    -- Reset daftar mob
+    mobList = {}
+    
+    -- Scan cepat hanya di sekitar player
+    local region = Region3.new(
+        playerPos - Vector3.new(range, range, range),
+        playerPos + Vector3.new(range, range, range)
+    )
+    
+    -- Dapatkan semua part dalam region (jauh lebih cepat dari GetDescendants)
+    local parts = workspace:FindPartsInRegion3(region, nil, 50)  -- Batasi maksimal 50 part
+    
+    for _, part in ipairs(parts) do
+        local model = part.Parent
+        -- Cek apakah ini mob (punya Humanoid dan bukan player)
+        if model and model:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(model) then
+            local humanoid = model:FindFirstChild("Humanoid")
+            local rootPart = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso")
             
-            local mobRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
-            if mobRoot then
-                local distance = (humanoidRootPart.Position - mobRoot.Position).Magnitude
-                if distance <= range then
-                    local humanoid = obj:FindFirstChild("Humanoid")
-                    if humanoid and humanoid.Health > 0 then
-                        humanoid.Health = 0  -- Langsung kill (sederhana)
-                        -- Alternatif: gunakan :TakeDamage() jika ada
-                    end
+            if humanoid and rootPart and humanoid.Health > 0 then
+                -- Simpan data mob
+                table.insert(mobList, {
+                    model = model,
+                    humanoid = humanoid,
+                    rootPart = rootPart,
+                    lastKill = 0
+                })
+            end
+        end
+    end
+end
+
+-- FUNGSI: Kill mob dengan cooldown
+local function processKills()
+    if not autoFarmActive then return end
+    
+    local currentTime = tick()
+    local killSpeed = getgenv().KillSpeed or 0.3
+    
+    for _, mob in ipairs(mobList) do
+        -- Cek apakah mob masih ada dan hidup
+        if mob.model and mob.model.Parent and mob.humanoid and mob.humanoid.Health > 0 then
+            -- Cek jarak
+            local distance = (humanoidRootPart.Position - mob.rootPart.Position).Magnitude
+            if distance <= (getgenv().KillAuraRange or 25) then
+                -- Cek cooldown per mob
+                if currentTime - mob.lastKill >= killSpeed then
+                    mob.humanoid.Health = 0
+                    mob.lastKill = currentTime
                 end
             end
         end
     end
 end
 
--- Fungsi Teleport ke mob terdekat
-local function teleportToNearestMob()
-    local mob, distance = getNearestMob(getgenv().TeleportRange or 50)
-    if mob then
-        local mobRoot = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Torso")
-        if mobRoot then
-            humanoidRootPart.CFrame = mobRoot.CFrame + Vector3.new(0, 5, 0)  -- Offset 5 studs ke atas
+-- AUTO FARM LOOP - VERSI PALING RINGAN
+local function startAutoFarm()
+    spawn(function()
+        while autoFarmActive do
+            -- Scan mob baru setiap 1 detik (bukan setiap frame)
+            scanMobs()
+            
+            -- Proses kill setiap 0.3 detik
+            local startTime = tick()
+            while autoFarmActive and tick() - startTime < 1 do
+                processKills()
+                wait(0.3)  -- Delay antar kill
+            end
         end
+    end)
+end
+
+-- TELEPORT FUNCTION
+local function teleportToNearestMob()
+    scanMobs()  -- Scan dulu
+    
+    if #mobList > 0 then
+        local nearestMob = nil
+        local shortestDist = math.huge
+        local playerPos = humanoidRootPart.Position
+        
+        for _, mob in ipairs(mobList) do
+            local dist = (playerPos - mob.rootPart.Position).Magnitude
+            if dist < shortestDist then
+                shortestDist = dist
+                nearestMob = mob
+            end
+        end
+        
+        if nearestMob then
+            humanoidRootPart.CFrame = nearestMob.rootPart.CFrame + Vector3.new(0, 5, 0)
+            print("✅ Teleport ke:", nearestMob.model.Name)
+        end
+    else
+        print("❌ Tidak ada mob di sekitar")
     end
 end
 
--- Keybind system
+-- KEYBIND SYSTEM
 userInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     
+    -- Toggle Auto Farm (Tombol F)
     if input.KeyCode == Enum.KeyCode[getgenv().KeyBindToggle or "F"] then
-        getgenv().AutoFarm = not getgenv().AutoFarm
-        print("AutoFarm:", getgenv().AutoFarm and "ON" or "OFF")
-    end
-    
-    if input.KeyCode == Enum.KeyCode[getgenv().TeleportKey or "H"] then
-        teleportToNearestMob()
-    end
-end)
-
--- Loop utama auto farm
-runService.Heartbeat:Connect(function()
-    if getgenv().AutoFarm and getgenv().KillAura then
-        killAura()
-    end
-end)
-
--- ESP sederhana (opsional)
-if getgenv().ESPEnabled then
-    while true do
-        wait(0.1)
-        for _, mob in pairs(workspace:GetDescendants()) do
-            if mob:IsA("Model") and mob:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(mob) then
-                local mobRoot = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Torso")
-                if mobRoot then
-                    -- Gambar ESP (implementasi sederhana, bisa dikembangkan)
-                    local distance = (humanoidRootPart.Position - mobRoot.Position).Magnitude
-                    if getgenv().ShowDistance then
-                        -- Tampilkan jarak (bisa pakai BillboardGui atau debug)
-                    end
-                end
-            end
+        autoFarmActive = not autoFarmActive
+        
+        if autoFarmActive then
+            print("🚀 AUTO FARM: ON")
+            startAutoFarm()  -- Mulai loop auto farm
+        else
+            print("💤 AUTO FARM: OFF")
         end
     end
-end
+    
+    -- Teleport (Tombol T)
+    if input.KeyCode == Enum.KeyCode[getgenv().TeleportKey or "T"] then
+        teleportToNearestMob()
+    end
+    
+    -- Kill Manual (Tombol K)
+    if input.KeyCode == Enum.KeyCode.K then
+        scanMobs()
+        processKills()
+        print("⚔️ Manual kill")
+    end
+end)
 
-print("✅ RPG Grinder Loaded! Tekan", getgenv().KeyBindToggle, "untuk toggle")
+print("=================================")
+print("✅ AUTO FARM ULTRA RINGAN Loaded!")
+print("=================================")
+print("Tekan", getgenv().KeyBindToggle or "F", "= ON/OFF Auto Farm")
+print("Tekan", getgenv().TeleportKey or "T", "= Teleport")
+print("Tekan K = Kill Manual")
+print("=================================")
