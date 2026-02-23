@@ -1,5 +1,5 @@
 -- Script Utama RPG Grinder - FLOATING MODE + GUI LENGKAP
--- Dengan slider radius dan filter nama mob
+-- Dengan multi-filter (bisa pilih banyak nama mob)
 
 local player = game.Players.LocalPlayer
 local userInputService = game:GetService("UserInputService")
@@ -11,8 +11,8 @@ local tweenService = game:GetService("TweenService")
 local floatingActive = false
 local currentTarget = nil
 local floatDistance = 5
-local searchRadius = 50  -- Radius pencarian default
-local targetMobName = ""  -- Filter nama mob (kosong = semua mob)
+local searchRadius = 50
+local targetMobFilters = {}  -- Table untuk menyimpan banyak filter
 local character = nil
 local humanoidRootPart = nil
 
@@ -55,15 +55,45 @@ local function waitForCharacter()
     return true
 end
 
--- FUNGSI: Cek apakah mob sesuai filter nama
-local function isMobNameMatch(mobName)
-    if targetMobName == "" then return true end  -- Filter kosong = semua mob
+-- FUNGSI: Parse string filter menjadi table
+local function parseFilters(filterString)
+    local filters = {}
+    if filterString == "" then
+        return filters  -- Kosong = semua mob
+    end
     
-    -- Case-insensitive comparison
-    return string.lower(mobName):find(string.lower(targetMobName)) ~= nil
+    -- Pisahkan dengan koma
+    for word in string.gmatch(filterString, "([^,]+)") do
+        -- Hapus spasi di awal dan akhir
+        local trimmed = word:match("^%s*(.-)%s*$")
+        if trimmed and trimmed ~= "" then
+            table.insert(filters, string.lower(trimmed))
+        end
+    end
+    
+    return filters
 end
 
--- FUNGSI: Mendapatkan mob terdekat (dengan filter nama)
+-- FUNGSI: Cek apakah mob sesuai dengan salah satu filter
+local function isMobNameMatch(mobName)
+    -- Jika tidak ada filter, terima semua mob
+    if #targetMobFilters == 0 then 
+        return true 
+    end
+    
+    local lowerName = string.lower(mobName)
+    
+    -- Cek apakah nama mob mengandung salah satu filter
+    for _, filter in ipairs(targetMobFilters) do
+        if string.find(lowerName, filter) then
+            return true
+        end
+    end
+    
+    return false
+end
+
+-- FUNGSI: Mendapatkan mob terdekat (dengan multi-filter)
 local function getNearestMob()
     if not humanoidRootPart then return nil end
     
@@ -85,9 +115,9 @@ local function getNearestMob()
         local obj = part.Parent
         if obj and obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
             
-            -- CEK FILTER NAMA
+            -- CEK MULTI-FILTER
             if not isMobNameMatch(obj.Name) then
-                continue  -- Skip mob yang tidak sesuai filter
+                continue
             end
             
             local mobRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
@@ -141,7 +171,7 @@ local function isMobAlive(mob)
     return true
 end
 
--- FUNGSI: Cari target baru (dengan filter nama)
+-- FUNGSI: Cari target baru (dengan multi-filter)
 local function findNewTarget()
     if not humanoidRootPart then 
         return 
@@ -161,7 +191,12 @@ local function findNewTarget()
         floatBehindMob(currentTarget)
         
         -- Tampilkan info target
-        local filterInfo = (targetMobName ~= "") and (" (filter: " .. targetMobName .. ")") or ""
+        local filterInfo = ""
+        if #targetMobFilters > 0 then
+            filterInfo = " (filter: " .. table.concat(targetMobFilters, ", ") .. ")"
+        else
+            filterInfo = " (semua mob)"
+        end
         print("✅ Target baru:", currentTarget.model.Name, "| HP:", math.floor(currentTarget.humanoid.Health), filterInfo)
     else
         noMobCount = noMobCount + 1
@@ -187,7 +222,7 @@ local function resetPosition()
 end
 
 -- =============================================
--- MEMBUAT GUI LENGKAP
+-- MEMBUAT GUI LENGKAP DENGAN MULTI-FILTER
 -- =============================================
 
 local function createGUI()
@@ -207,11 +242,11 @@ local function createGUI()
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.Parent = player.PlayerGui
     
-    -- Frame utama
+    -- Frame utama (lebih lebar untuk multi-filter)
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 350, 0, 550)  -- Lebih besar untuk fitur baru
-    mainFrame.Position = UDim2.new(0, 20, 0.5, -275)
+    mainFrame.Size = UDim2.new(0, 380, 0, 600)
+    mainFrame.Position = UDim2.new(0, 20, 0.5, -300)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
     mainFrame.BackgroundTransparency = 0.1
     mainFrame.BorderSizePixel = 0
@@ -230,7 +265,7 @@ local function createGUI()
     titleText.Size = UDim2.new(1, -40, 1, 0)
     titleText.Position = UDim2.new(0, 10, 0, 0)
     titleText.BackgroundTransparency = 1
-    titleText.Text = "⚡ RPG GRINDER - FLOATING MODE"
+    titleText.Text = "⚡ RPG GRINDER - MULTI FILTER"
     titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleText.TextXAlignment = Enum.TextXAlignment.Left
     titleText.Font = Enum.Font.GothamBold
@@ -259,7 +294,7 @@ local function createGUI()
     contentFrame.BackgroundTransparency = 1
     contentFrame.BorderSizePixel = 0
     contentFrame.ScrollBarThickness = 6
-    contentFrame.CanvasSize = UDim2.new(0, 0, 0, 650)
+    contentFrame.CanvasSize = UDim2.new(0, 0, 0, 750)
     contentFrame.Parent = mainFrame
     
     local yPos = 5
@@ -322,13 +357,13 @@ local function createGUI()
     yPos = yPos + 90
     
     -- =========================================
-    -- SECTION: FILTER NAMA MOB (FITUR BARU)
+    -- SECTION: MULTI-FILTER (FITUR BARU)
     -- =========================================
     local filterLabel = Instance.new("TextLabel")
     filterLabel.Size = UDim2.new(1, 0, 0, 25)
     filterLabel.Position = UDim2.new(0, 0, 0, yPos)
     filterLabel.BackgroundTransparency = 1
-    filterLabel.Text = "🎯 FILTER NAMA MOB"
+    filterLabel.Text = "🎯 MULTI-FILTER (Pisahkan dengan koma)"
     filterLabel.TextColor3 = Color3.fromRGB(255, 150, 100)
     filterLabel.TextXAlignment = Enum.TextXAlignment.Left
     filterLabel.Font = Enum.Font.GothamBold
@@ -337,7 +372,7 @@ local function createGUI()
     yPos = yPos + 30
     
     local filterFrame = Instance.new("Frame")
-    filterFrame.Size = UDim2.new(1, 0, 0, 70)
+    filterFrame.Size = UDim2.new(1, 0, 0, 100)
     filterFrame.Position = UDim2.new(0, 0, 0, yPos)
     filterFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
     filterFrame.BorderSizePixel = 0
@@ -347,22 +382,22 @@ local function createGUI()
     filterDesc.Size = UDim2.new(1, -20, 0, 20)
     filterDesc.Position = UDim2.new(0, 10, 0, 5)
     filterDesc.BackgroundTransparency = 1
-    filterDesc.Text = "Nama mob (kosongkan untuk semua):"
+    filterDesc.Text = "Nama mob (pisahkan dengan koma):"
     filterDesc.TextColor3 = Color3.fromRGB(200, 200, 200)
     filterDesc.TextXAlignment = Enum.TextXAlignment.Left
     filterDesc.Font = Enum.Font.Gotham
     filterDesc.TextSize = 12
     filterDesc.Parent = filterFrame
     
-    -- TextBox untuk input nama mob
+    -- TextBox untuk input multi-filter
     local nameInput = Instance.new("TextBox")
     nameInput.Size = UDim2.new(1, -30, 0, 30)
     nameInput.Position = UDim2.new(0, 15, 0, 30)
     nameInput.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
     nameInput.TextColor3 = Color3.fromRGB(255, 255, 255)
-    nameInput.PlaceholderText = "Contoh: Slime, Goblin, Boss"
+    nameInput.PlaceholderText = "Contoh: Slime, Goblin, Boss, Dragon"
     nameInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
-    nameInput.Text = targetMobName
+    nameInput.Text = ""
     nameInput.Font = Enum.Font.Gotham
     nameInput.TextSize = 14
     nameInput.ClearTextOnFocus = false
@@ -370,7 +405,7 @@ local function createGUI()
     
     -- Tombol Apply Filter
     local applyFilterBtn = Instance.new("TextButton")
-    applyFilterBtn.Size = UDim2.new(1, -30, 0, 25)
+    applyFilterBtn.Size = UDim2.new(0.5, -15, 0, 25)
     applyFilterBtn.Position = UDim2.new(0, 15, 0, 65)
     applyFilterBtn.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
     applyFilterBtn.Text = "TERAPKAN FILTER"
@@ -379,7 +414,18 @@ local function createGUI()
     applyFilterBtn.TextSize = 12
     applyFilterBtn.Parent = filterFrame
     
-    yPos = yPos + 80
+    -- Tombol Reset Filter
+    local resetFilterBtn = Instance.new("TextButton")
+    resetFilterBtn.Size = UDim2.new(0.5, -15, 0, 25)
+    resetFilterBtn.Position = UDim2.new(0.5, 5, 0, 65)
+    resetFilterBtn.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+    resetFilterBtn.Text = "RESET FILTER (Semua Mob)"
+    resetFilterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    resetFilterBtn.Font = Enum.Font.GothamBold
+    resetFilterBtn.TextSize = 10
+    resetFilterBtn.Parent = filterFrame
+    
+    yPos = yPos + 110
     
     -- =========================================
     -- SECTION: TARGET INFO
@@ -397,7 +443,7 @@ local function createGUI()
     yPos = yPos + 30
     
     local targetFrame = Instance.new("Frame")
-    targetFrame.Size = UDim2.new(1, 0, 0, 80)
+    targetFrame.Size = UDim2.new(1, 0, 0, 100)
     targetFrame.Position = UDim2.new(0, 0, 0, yPos)
     targetFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
     targetFrame.BorderSizePixel = 0
@@ -436,17 +482,19 @@ local function createGUI()
     targetDistLabel.TextSize = 13
     targetDistLabel.Parent = targetFrame
     
-    local filterInfoLabel = Instance.new("TextLabel")
-    filterInfoLabel.Size = UDim2.new(1, -20, 0, 20)
-    filterInfoLabel.Position = UDim2.new(0, 10, 0, 65)
-    filterInfoLabel.BackgroundTransparency = 1
-    filterInfoLabel.Text = "Filter: Semua mob"
-    filterInfoLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    filterInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
-    filterInfoLabel.Font = Enum.Font.Gotham
-    filterInfoLabel.TextSize = 12
-    filterInfoLabel.Parent = targetFrame
-    yPos = yPos + 90
+    -- Info filter aktif
+    local activeFilterLabel = Instance.new("TextLabel")
+    activeFilterLabel.Size = UDim2.new(1, -20, 0, 30)
+    activeFilterLabel.Position = UDim2.new(0, 10, 0, 70)
+    activeFilterLabel.BackgroundTransparency = 1
+    activeFilterLabel.Text = "Filter aktif: Semua mob"
+    activeFilterLabel.TextColor3 = Color3.fromRGB(200, 200, 100)
+    activeFilterLabel.TextXAlignment = Enum.TextXAlignment.Left
+    activeFilterLabel.TextWrapped = true
+    activeFilterLabel.Font = Enum.Font.Gotham
+    activeFilterLabel.TextSize = 12
+    activeFilterLabel.Parent = targetFrame
+    yPos = yPos + 110
     
     -- Tombol Aksi
     local searchBtn = Instance.new("TextButton")
@@ -538,7 +586,7 @@ local function createGUI()
     yPos = yPos + 60
     
     -- =========================================
-    -- SECTION: RADIUS PENCARIAN (FITUR BARU)
+    -- SECTION: RADIUS PENCARIAN
     -- =========================================
     local radiusLabel = Instance.new("TextLabel")
     radiusLabel.Size = UDim2.new(1, 0, 0, 25)
@@ -589,7 +637,7 @@ local function createGUI()
     radiusSliderBg.Parent = radiusFrame
     
     local radiusSliderFill = Instance.new("Frame")
-    radiusSliderFill.Size = UDim2.new((searchRadius - 20) / 80, 0, 1, 0)  -- Range 20-100
+    radiusSliderFill.Size = UDim2.new((searchRadius - 20) / 80, 0, 1, 0)
     radiusSliderFill.BackgroundColor3 = Color3.fromRGB(255, 150, 100)
     radiusSliderFill.BorderSizePixel = 0
     radiusSliderFill.Parent = radiusSliderBg
@@ -682,10 +730,10 @@ local function createGUI()
         end)
         
         -- Update filter info
-        if targetMobName == "" then
-            filterInfoLabel.Text = "Filter: Semua mob"
+        if #targetMobFilters == 0 then
+            activeFilterLabel.Text = "Filter aktif: Semua mob"
         else
-            filterInfoLabel.Text = "Filter: " .. targetMobName
+            activeFilterLabel.Text = "Filter aktif: " .. table.concat(targetMobFilters, ", ")
         end
         
         -- Update jarak belakang
@@ -734,13 +782,37 @@ local function createGUI()
         end)
     end)
     
-    -- Tombol Apply Filter
+    -- Tombol Apply Filter (MULTI-FILTER)
     applyFilterBtn.MouseButton1Click:Connect(function()
         pcall(function()
-            targetMobName = nameInput.Text
-            print("🎯 Filter nama mob:", targetMobName == "" and "Semua mob" or targetMobName)
+            local filterString = nameInput.Text
+            targetMobFilters = parseFilters(filterString)
+            
+            if #targetMobFilters == 0 then
+                print("🎯 Filter: Semua mob")
+            else
+                print("🎯 Multi-Filter: " .. table.concat(targetMobFilters, ", "))
+            end
             
             -- Reset target dan cari ulang dengan filter baru
+            if floatingActive then
+                currentTarget = nil
+                noMobCount = 0
+                lastSearchTime = 0
+                findNewTarget()
+            end
+            
+            updateGUI()
+        end)
+    end)
+    
+    -- Tombol Reset Filter
+    resetFilterBtn.MouseButton1Click:Connect(function()
+        pcall(function()
+            nameInput.Text = ""
+            targetMobFilters = {}
+            print("🎯 Filter direset: Semua mob")
+            
             if floatingActive then
                 currentTarget = nil
                 noMobCount = 0
@@ -838,7 +910,6 @@ local function createGUI()
                     
                     print("📡 Radius pencarian:", searchRadius)
                     
-                    -- Reset target dan cari ulang dengan radius baru
                     if floatingActive then
                         currentTarget = nil
                         lastSearchTime = 0
@@ -944,14 +1015,15 @@ updateGUIFunc = createGUI()
 
 print("=================================")
 print("✅ RPG Grinder - FLOATING MODE")
-print("    + GUI LENGKAP")
+print("    + MULTI-FILTER")
 print("=================================")
-print("🎯 FITUR BARU:")
-print("   • Slider Radius Pencarian")
-print("   • Filter Nama Mob")
+print("🎯 FITUR MULTI-FILTER:")
+print("   • Bisa pilih banyak mob sekaligus")
+print("   • Pisahkan dengan koma")
+print("   • Contoh: Slime, Goblin, Boss")
 print("=================================")
 print("🖱️ Cara Penggunaan:")
-print("1. Isi nama mob (kosongkan untuk semua)")
+print("1. Isi: Slime, Goblin, Dragon")
 print("2. Klik TERAPKAN FILTER")
 print("3. Klik AKTIFKAN untuk mulai")
 print("4. Atur radius dengan slider")
