@@ -68,7 +68,7 @@ local function processKills()
             if distance <= (getgenv().KillAuraRange or 25) then
                 -- Cek cooldown per mob
                 if currentTime - mob.lastKill >= killSpeed then
-                    mob.humanoid.Health = 0
+                    mob.humanoid.Health = 1
                     mob.lastKill = currentTime
                 end
             end
