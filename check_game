@@ -1,13 +1,12 @@
 -- =============================================
--- SCRIPT GAME STRUCTURE LOGGER - VERSI RINGAN
--- Hanya berjalan SEKALI, tanpa loop berulang
+-- SCRIPT GAME STRUCTURE LOGGER - DEEP SCAN
+-- Mencari mob sampai ke dalam folder
 -- =============================================
 
 local player = game.Players.LocalPlayer
 local replicatedStorage = game:GetService("ReplicatedStorage")
 local players = game:GetService("Players")
 
--- Fungsi untuk membuat log dengan format rapi
 local function logSection(title)
     print("=================================")
     print("📋 " .. title)
@@ -22,263 +21,154 @@ local function logSuccess(label, value)
     print("  ✅ " .. label .. ": " .. tostring(value))
 end
 
-local function logWarning(label, value)
-    print("  ⚠️ " .. label .. ": " .. tostring(value))
-end
-
--- =============================================
--- 1. DETEKSI ROOT PART (RINGAN)
--- =============================================
-local function detectRootPartName(model)
-    if not model then return "No Model" end
+-- Fungsi scan mendalam (rekursif) untuk mencari mob
+local function scanForMobs(container, depth, maxDepth)
+    depth = depth or 0
+    maxDepth = maxDepth or 3  -- Batasi kedalaman
     
-    local possibleNames = {
-        "HumanoidRootPart", "Torso", "UpperTorso", 
-        "LowerTorso", "RootPart", "Hips"
-    }
+    local mobs = {}
+    local folders = {}
     
-    for _, name in ipairs(possibleNames) do
-        local part = model:FindFirstChild(name)
-        if part and part:IsA("BasePart") then
-            return name
-        end
-    end
+    if depth > maxDepth then return mobs, folders end
     
-    return "Tidak ditemukan"
-end
-
--- =============================================
--- 2. DETEKSI DAMAGE METHOD (RINGAN)
--- =============================================
-local function detectDamageMethod(humanoid)
-    if not humanoid then return {} end
-    
-    local methods = {}
-    
-    -- Cek apakah bisa langsung set health
-    local canSetHealth = pcall(function()
-        local oldHealth = humanoid.Health
-        humanoid.Health = oldHealth
-        return true
-    end)
-    
-    if canSetHealth then
-        table.insert(methods, "HEALTH_DIRECT")
-    end
-    
-    -- Cek apakah punya method TakeDamage
-    if humanoid.TakeDamage then
-        table.insert(methods, "TAKE_DAMAGE")
-    end
-    
-    return methods
-end
-
--- =============================================
--- 3. DETEKSI REMOTE EVENTS (RINGAN - HANYA 10 PERTAMA)
--- =============================================
-local function findRemoteEvents()
-    local remoteList = {}
-    local count = 0
-    
-    -- Batasi hanya 10 remote pertama
-    for _, obj in ipairs(replicatedStorage:GetChildren()) do
-        if count >= 10 then break end
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            table.insert(remoteList, obj.Name)
-            count = count + 1
-        end
-    end
-    
-    return remoteList
-end
-
--- =============================================
--- 4. DETEKSI NPC/MOB (RINGAN - HANYA 5 PERTAMA)
--- =============================================
-local function detectMobs()
-    local mobList = {}
-    local npcList = {}
-    local count = 0
-    
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if count >= 10 then break end
-        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
-            local name = obj.Name
-            if name:lower():find("npc") or name:lower():find("pedagang") or name:lower():find("merchant") then
-                table.insert(npcList, name)
-            else
-                table.insert(mobList, name)
-            end
-            count = count + 1
-        end
-    end
-    
-    return mobList, npcList
-end
-
--- =============================================
--- 5. DETEKSI AUTO SELL (RINGAN)
--- =============================================
-local function detectAutoSell()
-    local merchants = {}
-    local sellRemotes = {}
-    
-    -- Cari NPC Merchant (hanya 5 pertama)
-    local count = 0
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if count >= 5 then break end
-        if obj:IsA("Model") then
-            local name = obj.Name:lower()
-            if name:find("merchant") or name:find("shop") or name:find("trader") then
-                table.insert(merchants, obj.Name)
-                count = count + 1
+    for _, obj in ipairs(container:GetChildren()) do
+        -- Cek apakah ini model dengan Humanoid
+        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") then
+            if not players:GetPlayerFromCharacter(obj) then
+                table.insert(mobs, {
+                    name = obj.Name,
+                    path = container.Name .. "/" .. obj.Name,
+                    health = obj.Humanoid and obj.Humanoid.Health or "unknown",
+                    rootPart = obj:FindFirstChild("HumanoidRootPart") and "ada" or "tidak ada"
+                })
             end
         end
-    end
-    
-    -- Cari remote sell (hanya 5 pertama)
-    count = 0
-    for _, obj in ipairs(replicatedStorage:GetChildren()) do
-        if count >= 5 then break end
-        if obj:IsA("RemoteEvent") then
-            local name = obj.Name:lower()
-            if name:find("sell") or name:find("buy") or name:find("trade") then
-                table.insert(sellRemotes, obj.Name)
-                count = count + 1
-            end
-        end
-    end
-    
-    return merchants, sellRemotes
-end
-
--- =============================================
--- 6. FUNGSI UTAMA (HANYA SEKALI JALAN)
--- =============================================
-local function runLogger()
-    logSection("GAME STRUCTURE LOGGER - RINGAN")
-    logInfo("Game ID", game.PlaceId)
-    logInfo("Game Name", game.Name)
-    logInfo("Timestamp", os.date("%Y-%m-%d %H:%M:%S"))
-    
-    -- =========================================
-    -- KARAKTER PLAYER
-    -- =========================================
-    logSection("KARAKTER PLAYER")
-    
-    local character = player.Character
-    if character then
-        logSuccess("Nama Karakter", character.Name)
         
-        local rootName = detectRootPartName(character)
-        logSuccess("Root Part Name", rootName)
-        
-        local humanoid = character:FindFirstChild("Humanoid")
-        if humanoid then
-            logSuccess("Humanoid", "Ditemukan")
-            logInfo("Health", humanoid.Health .. "/" .. humanoid.MaxHealth)
-            logInfo("Walk Speed", humanoid.WalkSpeed)
-            
-            local methods = detectDamageMethod(humanoid)
-            logInfo("Damage Methods", table.concat(methods, ", "))
+        -- Catat folder untuk info
+        if obj:IsA("Folder") then
+            table.insert(folders, obj.Name)
+            -- Scan isi folder (rekursif)
+            local subMobs, subFolders = scanForMobs(obj, depth + 1, maxDepth)
+            for _, m in ipairs(subMobs) do
+                table.insert(mobs, m)
+            end
         end
-    else
-        logWarning("Karakter", "Belum spawn")
     end
     
-    -- =========================================
-    -- REMOTE EVENTS
-    -- =========================================
-    logSection("REMOTE EVENTS")
+    return mobs, folders
+end
+
+-- =============================================
+-- MAIN LOGGER
+-- =============================================
+logSection("GAME STRUCTURE LOGGER - DEEP SCAN")
+logInfo("Game ID", game.PlaceId)
+logInfo("Game Name", game.Name)
+logInfo("Timestamp", os.date("%Y-%m-%d %H:%M:%S"))
+
+-- =========================================
+-- KARAKTER PLAYER
+-- =========================================
+logSection("KARAKTER PLAYER")
+
+local character = player.Character
+if character then
+    logSuccess("Nama Karakter", character.Name)
     
-    local remotes = findRemoteEvents()
-    if #remotes > 0 then
-        logSuccess("Remote Ditemukan", #remotes)
-        for i, remote in ipairs(remotes) do
-            print("    " .. i .. ". " .. remote)
-        end
-    else
-        logWarning("Remote", "Tidak ditemukan")
+    local rootPart = character:FindFirstChild("HumanoidRootPart") and "HumanoidRootPart" or 
+                     character:FindFirstChild("Torso") and "Torso" or "tidak ditemukan"
+    logSuccess("Root Part Name", rootPart)
+    
+    local humanoid = character:FindFirstChild("Humanoid")
+    if humanoid then
+        logSuccess("Humanoid", "Ditemukan")
+        logInfo("Health", humanoid.Health .. "/" .. humanoid.MaxHealth)
     end
-    
-    -- =========================================
-    -- MOB & NPC
-    -- =========================================
-    logSection("MOB & NPC")
-    
-    local mobs, npcs = detectMobs()
-    logInfo("Contoh Mob", #mobs > 0 and table.concat(mobs, ", ") or "Tidak ada")
-    logInfo("Contoh NPC", #npcs > 0 and table.concat(npcs, ", ") or "Tidak ada")
-    
-    -- =========================================
-    -- AUTO SELL INFO
-    -- =========================================
-    logSection("AUTO SELL INFO")
-    
-    local merchants, sellRemotes = detectAutoSell()
-    logInfo("Merchant", #merchants > 0 and table.concat(merchants, ", ") or "Tidak ada")
-    logInfo("Sell Remotes", #sellRemotes > 0 and table.concat(sellRemotes, ", ") or "Tidak ada")
-    
-    -- =========================================
-    -- READY-TO-USE CONFIG
-    -- =========================================
-    logSection("READY-TO-USE CONFIG")
-    
-    local rootName = character and detectRootPartName(character) or "HumanoidRootPart"
-    local damageMethod = "health"
-    if character and character:FindFirstChild("Humanoid") then
-        local methods = detectDamageMethod(character.Humanoid)
-        damageMethod = #methods > 0 and methods[1] or "health"
+end
+
+-- =========================================
+-- SCAN SEMUA FOLDER UNTUK MOB
+-- =========================================
+logSection("DEEP SCAN - MOB & NPC")
+
+local allMobs = {}
+local allFolders = {}
+
+-- Scan workspace
+local workspaceMobs, workspaceFolders = scanForMobs(workspace)
+for _, m in ipairs(workspaceMobs) do table.insert(allMobs, m) end
+for _, f in ipairs(workspaceFolders) do table.insert(allFolders, f) end
+
+-- Tampilkan folder yang ditemukan
+if #allFolders > 0 then
+    logSuccess("Folder Ditemukan", #allFolders)
+    for i, folder in ipairs(allFolders) do
+        print("    📁 " .. folder)
     end
-    
-    print("\n-- Copy paste ini ke script Anda:\n")
-    print("local GAME_CONFIG = {")
-    print("    rootPartName = \"" .. rootName .. "\",")
-    print("    humanoidName = \"Humanoid\",")
-    print("    damageMethod = \"" .. damageMethod .. "\",")
-    print("    attackRemotes = {")
+else
+    logInfo("Folder", "Tidak ada folder khusus")
+end
+
+-- Tampilkan mob yang ditemukan
+if #allMobs > 0 then
+    logSuccess("MOB DITEMUKAN!", #allMobs)
+    for i, mob in ipairs(allMobs) do
+        print("\n  📍 Mob #" .. i .. ":")
+        print("      Nama: " .. mob.name)
+        print("      Lokasi: " .. mob.path)
+        print("      Health: " .. tostring(mob.health))
+        print("      RootPart: " .. mob.rootPart)
+    end
+else
+    logWarning("MOB", "TIDAK ADA MOB TERDETEKSI!")
+    print("\n  ⚠️ Kemungkinan penyebab:")
+    print("    1. Mob ada di folder dengan nama berbeda")
+    print("    2. Mob menggunakan struktur non-standar")
+    print("    3. Area ini tidak ada mob")
+end
+
+-- =========================================
+-- REMOTE EVENTS
+-- =========================================
+logSection("REMOTE EVENTS")
+
+local remotes = {}
+for _, obj in ipairs(replicatedStorage:GetChildren()) do
+    if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+        table.insert(remotes, obj.Name)
+    end
+end
+
+if #remotes > 0 then
+    logSuccess("Remote Ditemukan", #remotes)
     for i, remote in ipairs(remotes) do
-        if remote:lower():find("attack") or remote:lower():find("damage") or remote:lower():find("hit") then
-            print("        \"" .. remote .. "\",")
-        end
+        print("    " .. i .. ". " .. remote)
     end
-    print("    },")
-    print("    sellRemotes = {")
-    for i, remote in ipairs(sellRemotes) do
-        print("        \"" .. remote .. "\",")
-    end
-    print("    },")
-    print("    merchants = {")
-    for i, merchant in ipairs(merchants) do
-        print("        \"" .. merchant .. "\",")
-    end
-    print("    }")
-    print("}")
-    
-    logSection("LOGGING COMPLETE")
-    print("\n✅ Logger selesai! Copy config di atas.")
+else
+    logInfo("Remote", "Tidak ada")
 end
 
--- JALANKAN LOGGER HANYA SEKALI
-local success, err = pcall(runLogger)
+-- =========================================
+-- READY-TO-USE CONFIG
+-- =========================================
+logSection("READY-TO-USE CONFIG")
 
-if not success then
-    print("❌ Error saat menjalankan logger:")
-    print(err)
-    print("\n⚠️ Logger gagal dijalankan. Mungkin game terlalu kompleks.")
-    print("✅ Tapi Anda tetap bisa menggunakan script dengan konfigurasi default:")
-    print([[
-local GAME_CONFIG = {
-    rootPartName = "HumanoidRootPart",
-    humanoidName = "Humanoid",
-    damageMethod = "health",
-    attackRemotes = {},
-    sellRemotes = {},
-    merchants = {}
-}
-    ]])
+print("\n-- Copy paste ini ke script Anda:\n")
+print("local GAME_CONFIG = {")
+print("    rootPartName = \"HumanoidRootPart\",")
+print("    humanoidName = \"Humanoid\",")
+print("    damageMethod = \"HEALTH_DIRECT\",")
+print("    attackRemotes = {")
+for i, remote in ipairs(remotes) do
+    print("        \"" .. remote .. "\",")
 end
+print("    },")
+print("    mobFolders = {")
+for i, folder in ipairs(allFolders) do
+    print("        \"" .. folder .. "\",")
+end
+print("    }")
+print("}")
 
-print("\n✅ SCRIPT LOGGER TELAH SELESAI")
-print("   Tidak ada loop, tidak akan membuat Roblox crash")
+logSection("LOGGING COMPLETE")
+print("\n✅ Jika mob tidak terdeteksi, coba jalankan di area yang ada mob!")
