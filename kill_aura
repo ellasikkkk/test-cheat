@@ -1,0 +1,70 @@
+-- KILL AURA SEDERHANA untuk game UGC Anda
+-- Berdasarkan data: HEALTH_DIRECT (bisa langsung kurangi health)
+
+local player = game.Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+
+-- Konfigurasi
+local killAuraActive = false
+local radius = 20  -- Radius serangan
+local damage = 50  -- Damage per tick
+local cooldown = 0.2  -- Kecepatan serangan
+local lastAttack = 0
+
+-- Fungsi deteksi mob (sama seperti di logger)
+local function isMob(obj)
+    if not obj:IsA("Model") then return false end
+    if not obj:FindFirstChild("Humanoid") then return false end
+    if Players:GetPlayerFromCharacter(obj) then return false end
+    
+    -- Cek apakah ini NPC (jangan diserang)
+    local name = obj.Name:lower()
+    local npcIndicators = {"npc", "merchant", "shop", "guard", "blacksmith"}
+    for _, keyword in ipairs(npcIndicators) do
+        if name:find(keyword) then return false end
+    end
+    
+    return true
+end
+
+-- Fungsi utama Kill Aura
+local function killAura()
+    if not killAuraActive then return end
+    
+    local currentTime = tick()
+    if currentTime - lastAttack < cooldown then return end
+    
+    -- Cari mob di sekitar
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if isMob(obj) then
+            local humanoid = obj:FindFirstChild("Humanoid")
+            local rootPart = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
+            
+            if humanoid and rootPart and humanoid.Health > 0 then
+                -- Cek jarak
+                local distance = (player.Character.HumanoidRootPart.Position - rootPart.Position).Magnitude
+                if distance <= radius then
+                    -- LANGSUNG KURANGI HEALTH (HEALTH_DIRECT)
+                    humanoid.Health = humanoid.Health - damage
+                    print("⚔️ Attack:", obj.Name, "HP:", math.floor(humanoid.Health))
+                end
+            end
+        end
+    end
+    
+    lastAttack = currentTime
+end
+
+-- Loop utama
+RunService.Heartbeat:Connect(killAura)
+
+-- Control (tekan G untuk toggle)
+game:GetService("UserInputService").InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.G then
+        killAuraActive = not killAuraActive
+        print("🔴 Kill Aura:", killAuraActive and "ON" or "OFF")
+    end
+end)
+
+print("✅ Kill Aura siap! Tekan G untuk toggle")
