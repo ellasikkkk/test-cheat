@@ -1,0 +1,588 @@
+-- =============================================
+-- SCRIPT RPG GRINDER - UGC VERSION + AUTO DETECT
+-- Dengan deteksi mob otomatis meskipun tidak di logger
+-- =============================================
+
+local player = game.Players.LocalPlayer
+local userInputService = game:GetService("UserInputService")
+local runService = game:GetService("RunService")
+local players = game:GetService("Players")
+local virtualInputManager = game:GetService("VirtualInputManager")
+local tweenService = game:GetService("TweenService")
+local replicatedStorage = game:GetService("ReplicatedStorage")
+
+-- =============================================
+-- KONFIGURASI DASAR DARI LOGGER
+-- =============================================
+local GAME_CONFIG = {
+    rootPartName = "HumanoidRootPart",
+    humanoidName = "Humanoid",
+    damageMethod = "HEALTH_DIRECT",
+    allRemotes = {
+        "linkErrorGuiSignal",
+        "PostieSent", 
+        "PostieReceived",
+        "GameAnalyticsRemoteConfigs",
+        "GameAnalyticsError"
+    }
+}
+
+-- =============================================
+-- VARIABEL GLOBAL
+-- =============================================
+local floatingActive = false
+local killAuraActive = false
+local autoClickActive = false
+local autoCollectActive = false
+local antiAFKActive = false
+local espActive = false
+
+local currentTarget = nil
+local floatDistance = 5
+local searchRadius = 50
+local killRadius = 20
+local damageAmount = 50
+local collectRadius = 20
+
+local character = nil
+local humanoidRootPart = nil
+
+-- VARIABEL UNTUK KILL AURA
+local killCooldown = 0
+local lastKillTime = 0
+local killSpeed = 0.2
+
+-- VARIABEL UNTUK ANTI AFK
+local lastMouseMove = 0
+local lastJump = 0
+local afkInterval = 300
+
+-- VARIABEL ANTI-LAG
+local searchCooldown = 0
+local noMobCount = 0
+local lastSearchTime = 0
+local SEARCH_DELAY_NORMAL = 0.5
+local SEARCH_DELAY_LOW = 2
+local SEARCH_DELAY_IDLE = 5
+local MAX_NO_MOB_COUNT = 5
+
+-- =============================================
+-- FUNGSI DETEKSI MOB (OTOMATIS)
+-- =============================================
+
+-- Deteksi root part name secara otomatis
+local function detectRootPart(model)
+    local possibleNames = {
+        "HumanoidRootPart", "Torso", "UpperTorso", 
+        "LowerTorso", "RootPart", "Hips", "Pelvis",
+        "Chest", "Head", "Body"
+    }
+    
+    for _, name in ipairs(possibleNames) do
+        local part = model:FindFirstChild(name)
+        if part and part:IsA("BasePart") then
+            return part
+        end
+    end
+    
+    -- Cari BasePart pertama sebagai fallback
+    for _, child in ipairs(model:GetChildren()) do
+        if child:IsA("BasePart") then
+            return child
+        end
+    end
+    
+    return nil
+end
+
+-- Deteksi apakah objek adalah mob (bukan player)
+local function isMob(obj)
+    if not obj:IsA("Model") then return false end
+    if not obj:FindFirstChild("Humanoid") then return false end
+    if players:GetPlayerFromCharacter(obj) then return false end
+    
+    -- Cek apakah ini NPC (biasanya tidak bisa dibunuh)
+    local name = obj.Name:lower()
+    local npcIndicators = {"npc", "merchant", "shop", "trader", "guard", "banker"}
+    for _, indicator in ipairs(npcIndicators) do
+        if name:find(indicator) then
+            return false  -- Ini NPC, bukan mob
+        end
+    end
+    
+    return true
+end
+
+-- Mendapatkan semua mob dalam radius
+local function getMobsInRange(range)
+    if not humanoidRootPart then return {} end
+    
+    local mobs = {}
+    local playerPos = humanoidRootPart.Position
+    
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if isMob(obj) then
+            local rootPart = detectRootPart(obj)
+            if rootPart then
+                local distance = (playerPos - rootPart.Position).Magnitude
+                if distance <= (range or searchRadius) then
+                    table.insert(mobs, {
+                        model = obj,
+                        rootPart = rootPart,
+                        humanoid = obj:FindFirstChild("Humanoid")
+                    })
+                end
+            end
+        end
+    end
+    
+    return mobs
+end
+
+-- Mendapatkan mob terdekat
+local function getNearestMob()
+    local mobs = getMobsInRange(searchRadius)
+    local nearest = nil
+    local shortestDist = math.huge
+    
+    for _, mob in ipairs(mobs) do
+        local dist = (humanoidRootPart.Position - mob.rootPart.Position).Magnitude
+        if dist < shortestDist then
+            shortestDist = dist
+            nearest = mob
+        end
+    end
+    
+    return nearest
+end
+
+-- =============================================
+-- FITUR 1: KILL AURA (OTOMATIS)
+-- =============================================
+local function killAura()
+    if not killAuraActive then return end
+    
+    local currentTime = tick()
+    if currentTime - lastKillTime < killCooldown then return end
+    
+    local mobs = getMobsInRange(killRadius)
+    
+    for _, mob in ipairs(mobs) do
+        if mob and mob.humanoid and mob.humanoid.Health > 0 then
+            
+            -- METODE 1: HEALTH DIRECT
+            pcall(function()
+                mob.humanoid.Health = mob.humanoid.Health - damageAmount
+                print("⚔️ Damage:", mob.model.Name, "HP:", math.floor(mob.humanoid.Health))
+            end)
+            
+            -- METODE 2: TAKE DAMAGE
+            pcall(function()
+                if mob.humanoid.TakeDamage then
+                    mob.humanoid:TakeDamage(damageAmount)
+                end
+            end)
+            
+            -- METODE 3: COBA REMOTE ATTACK
+            for _, remoteName in ipairs(GAME_CONFIG.allRemotes) do
+                local remote = replicatedStorage:FindFirstChild(remoteName)
+                if remote and remote:IsA("RemoteEvent") then
+                    pcall(function()
+                        remote:FireServer(mob.model)
+                    end)
+                end
+            end
+        end
+    end
+    
+    if #mobs > 0 then
+        lastKillTime = currentTime
+    end
+end
+
+-- =============================================
+-- FITUR 2: FLOATING MODE (TERBANG KE MOB)
+-- =============================================
+local function floatToMob(mob)
+    if not mob or not mob.rootPart or not humanoidRootPart then return end
+    
+    local mobPos = mob.rootPart.Position
+    local targetPos = mobPos - (mob.rootPart.CFrame.LookVector * floatDistance) + Vector3.new(0, 2, 0)
+    local lookAtMob = CFrame.lookAt(targetPos, mobPos)
+    humanoidRootPart.CFrame = lookAtMob
+end
+
+local function findAndFloatToMob()
+    local mob = getNearestMob()
+    if mob then
+        currentTarget = mob
+        floatToMob(currentTarget)
+        print("🎯 Target:", mob.model.Name, "HP:", math.floor(mob.humanoid.Health))
+    else
+        currentTarget = nil
+    end
+end
+
+-- =============================================
+-- FITUR 3: AUTO COLLECT
+-- =============================================
+local function getItemsInRange()
+    if not humanoidRootPart then return {} end
+    
+    local items = {}
+    local playerPos = humanoidRootPart.Position
+    
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if (obj:IsA("Part") or obj:IsA("MeshPart")) and obj.Transparency < 1 then
+            if not obj:FindFirstChild("Humanoid") then  -- Bukan karakter
+                local distance = (playerPos - obj.Position).Magnitude
+                if distance <= collectRadius then
+                    table.insert(items, obj)
+                end
+            end
+        end
+    end
+    
+    return items
+end
+
+local function autoCollect()
+    if not autoCollectActive then return end
+    
+    local items = getItemsInRange()
+    for _, item in ipairs(items) do
+        firetouchinterest(humanoidRootPart, item, 0)
+        wait(0.05)
+        firetouchinterest(humanoidRootPart, item, 1)
+        print("📦 Mengambil:", item.Name)
+    end
+end
+
+-- =============================================
+-- FITUR 4: AUTO CLICK
+-- =============================================
+local function autoClick()
+    if not autoClickActive then return end
+    
+    local viewport = workspace.CurrentCamera.ViewportSize
+    local center = Vector2.new(viewport.X / 2, viewport.Y / 2)
+    
+    for i = 1, 5 do
+        virtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+        wait(0.01)
+        virtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+        wait(0.01)
+    end
+end
+
+-- =============================================
+-- FITUR 5: ESP (Melihat mob tembus pandang)
+-- =============================================
+local function updateESP()
+    if not espActive then return end
+    
+    -- Hapus ESP lama
+    for _, v in ipairs(workspace:GetChildren()) do
+        if v:IsA("Model") and v:FindFirstChild("ESP_Box") then
+            v.ESP_Box:Destroy()
+        end
+    end
+    
+    -- Buat ESP baru untuk setiap mob
+    local mobs = getMobsInRange(999)  -- Semua mob
+    for _, mob in ipairs(mobs) do
+        if mob.rootPart then
+            -- Buat box ESP
+            local box = Instance.new("BoxHandleAdornment")
+            box.Name = "ESP_Box"
+            box.Size = Vector3.new(4, 6, 4)
+            box.Transparency = 0.5
+            box.Color3 = Color3.fromRGB(255, 0, 0)
+            box.AlwaysOnTop = true
+            box.ZIndex = 10
+            box.Adornee = mob.rootPart
+            box.Parent = mob.model
+        end
+    end
+end
+
+-- =============================================
+-- FITUR 6: ANTI AFK
+-- =============================================
+local function antiAFK()
+    if not antiAFKActive then return end
+    
+    local currentTime = tick()
+    
+    if currentTime - lastMouseMove > afkInterval then
+        local viewport = workspace.CurrentCamera.ViewportSize
+        local x = math.random(100, viewport.X - 100)
+        local y = math.random(100, viewport.Y - 100)
+        virtualInputManager:SendMouseMoveEvent(x, y, game)
+        lastMouseMove = currentTime
+    end
+    
+    if currentTime - lastJump > afkInterval + 30 then
+        if character and character.Humanoid then
+            character.Humanoid.Jump = true
+            wait(0.1)
+            character.Humanoid.Jump = false
+            lastJump = currentTime
+        end
+    end
+end
+
+-- =============================================
+-- KEYBIND SYSTEM
+-- =============================================
+userInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    if not character or not humanoidRootPart then
+        waitForCharacter()
+    end
+    
+    if input.KeyCode == Enum.KeyCode.F then
+        floatingActive = not floatingActive
+        print("🚀 FLOATING MODE:", floatingActive and "ON" or "OFF")
+        if floatingActive then
+            findAndFloatToMob()
+        end
+    end
+    
+    if input.KeyCode == Enum.KeyCode.G then
+        killAuraActive = not killAuraActive
+        print("⚔️ KILL AURA:", killAuraActive and "ON" or "OFF")
+    end
+    
+    if input.KeyCode == Enum.KeyCode.C then
+        autoClickActive = not autoClickActive
+        print("🖱️ AUTO CLICK:", autoClickActive and "ON" or "OFF")
+    end
+    
+    if input.KeyCode == Enum.KeyCode.X then
+        autoCollectActive = not autoCollectActive
+        print("📦 AUTO COLLECT:", autoCollectActive and "ON" or "OFF")
+    end
+    
+    if input.KeyCode == Enum.KeyCode.A then
+        antiAFKActive = not antiAFKActive
+        print("⏰ ANTI AFK:", antiAFKActive and "ON" or "OFF")
+    end
+    
+    if input.KeyCode == Enum.KeyCode.E then
+        espActive = not espActive
+        print("👁️ ESP:", espActive and "ON" or "OFF")
+        if not espActive then
+            -- Hapus semua ESP
+            for _, v in ipairs(workspace:GetChildren()) do
+                if v:IsA("Model") and v:FindFirstChild("ESP_Box") then
+                    v.ESP_Box:Destroy()
+                end
+            end
+        end
+    end
+    
+    if input.KeyCode == Enum.KeyCode.T then
+        findAndFloatToMob()
+    end
+    
+    if input.KeyCode == Enum.KeyCode.P then
+        local mobCount = #getMobsInRange(999)
+        print("=================================")
+        print("📊 STATUS:")
+        print("Floating:", floatingActive and "ON" or "OFF")
+        print("Kill Aura:", killAuraActive and "ON" or "OFF")
+        print("Auto Click:", autoClickActive and "ON" or "OFF")
+        print("Auto Collect:", autoCollectActive and "ON" or "OFF")
+        print("Anti AFK:", antiAFKActive and "ON" or "OFF")
+        print("ESP:", espActive and "ON" or "OFF")
+        print("Mob di sekitar:", mobCount)
+        print("=================================")
+    end
+end)
+
+-- =============================================
+-- LOOP UTAMA
+-- =============================================
+updateCharacter()
+
+runService.Heartbeat:Connect(function()
+    pcall(function()
+        if not character or not humanoidRootPart then
+            if player.Character then
+                updateCharacter()
+            end
+            return
+        end
+        
+        -- Anti AFK
+        if antiAFKActive then
+            antiAFK()
+        end
+        
+        -- Auto Collect
+        if autoCollectActive then
+            autoCollect()
+        end
+        
+        -- Auto Click
+        if autoClickActive then
+            autoClick()
+        end
+        
+        -- Kill Aura
+        if killAuraActive then
+            killAura()
+        end
+        
+        -- Floating Mode
+        if floatingActive then
+            if not currentTarget or not currentTarget.model or not currentTarget.model.Parent then
+                findAndFloatToMob()
+            else
+                floatToMob(currentTarget)
+            end
+        end
+        
+        -- ESP
+        if espActive then
+            updateESP()
+        end
+        
+        wait(0.1)
+    end)
+end)
+
+-- =============================================
+-- DETEKSI RESPAWN
+-- =============================================
+player.CharacterAdded:Connect(function(newCharacter)
+    character = newCharacter
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    print("🔄 Karakter respawn!")
+end)
+
+-- =============================================
+-- GUI
+-- =============================================
+local function createGUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "RPG_Grinder"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = player.PlayerGui
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 300, 0, 400)
+    frame.Position = UDim2.new(0, 20, 0.5, -200)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+    frame.BackgroundTransparency = 0.1
+    frame.BorderSizePixel = 0
+    frame.Active = true
+    frame.Draggable = true
+    frame.Parent = screenGui
+    
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 35)
+    title.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    title.Text = "⚡ RPG GRINDER - UGC"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 16
+    title.Parent = frame
+    
+    local yPos = 45
+    
+    local function createButton(text, color, key)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, -20, 0, 30)
+        btn.Position = UDim2.new(0, 10, 0, yPos)
+        btn.BackgroundColor3 = color
+        btn.Text = text .. " [" .. key .. "]"
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Font = Enum.Font.Gotham
+        btn.TextSize = 14
+        btn.Parent = frame
+        return btn
+    end
+    
+    local btnF = createButton("Floating Mode", Color3.fromRGB(60, 60, 70), "F")
+    btnF.MouseButton1Click:Connect(function()
+        floatingActive = not floatingActive
+        btnF.BackgroundColor3 = floatingActive and Color3.fromRGB(200, 80, 80) or Color3.fromRGB(60, 60, 70)
+    end)
+    yPos = yPos + 35
+    
+    local btnG = createButton("Kill Aura", Color3.fromRGB(60, 60, 70), "G")
+    btnG.MouseButton1Click:Connect(function()
+        killAuraActive = not killAuraActive
+        btnG.BackgroundColor3 = killAuraActive and Color3.fromRGB(200, 80, 80) or Color3.fromRGB(60, 60, 70)
+    end)
+    yPos = yPos + 35
+    
+    local btnC = createButton("Auto Click", Color3.fromRGB(60, 60, 70), "C")
+    btnC.MouseButton1Click:Connect(function()
+        autoClickActive = not autoClickActive
+        btnC.BackgroundColor3 = autoClickActive and Color3.fromRGB(200, 80, 80) or Color3.fromRGB(60, 60, 70)
+    end)
+    yPos = yPos + 35
+    
+    local btnX = createButton("Auto Collect", Color3.fromRGB(60, 60, 70), "X")
+    btnX.MouseButton1Click:Connect(function()
+        autoCollectActive = not autoCollectActive
+        btnX.BackgroundColor3 = autoCollectActive and Color3.fromRGB(200, 80, 80) or Color3.fromRGB(60, 60, 70)
+    end)
+    yPos = yPos + 35
+    
+    local btnA = createButton("Anti AFK", Color3.fromRGB(60, 60, 70), "A")
+    btnA.MouseButton1Click:Connect(function()
+        antiAFKActive = not antiAFKActive
+        btnA.BackgroundColor3 = antiAFKActive and Color3.fromRGB(200, 80, 80) or Color3.fromRGB(60, 60, 70)
+    end)
+    yPos = yPos + 35
+    
+    local btnE = createButton("ESP", Color3.fromRGB(60, 60, 70), "E")
+    btnE.MouseButton1Click:Connect(function()
+        espActive = not espActive
+        btnE.BackgroundColor3 = espActive and Color3.fromRGB(200, 80, 80) or Color3.fromRGB(60, 60, 70)
+    end)
+    yPos = yPos + 35
+    
+    local btnT = createButton("Cari Target", Color3.fromRGB(50, 100, 200), "T")
+    btnT.MouseButton1Click:Connect(findAndFloatToMob)
+    yPos = yPos + 35
+    
+    local btnP = createButton("Status", Color3.fromRGB(100, 150, 100), "P")
+    btnP.MouseButton1Click:Connect(function()
+        local mobCount = #getMobsInRange(999)
+        print("=================================")
+        print("📊 STATUS - MOB DITEMUKAN:", mobCount)
+        print("=================================")
+    end)
+end
+
+-- Buat GUI
+createGUI()
+
+-- =============================================
+-- INFO AWAL
+-- =============================================
+print("=================================")
+print("⚡ RPG GRINDER - UGC VERSION")
+print("=================================")
+print("📋 KEYBINDS:")
+print("F = Floating Mode (terbang ke mob)")
+print("G = Kill Aura (serang otomatis)")
+print("C = Auto Click")
+print("X = Auto Collect (ambil item)")
+print("A = Anti AFK")
+print("E = ESP (lihat mob)")
+print("T = Cari target baru")
+print("P = Status")
+print("=================================")
+print("🎯 FITUR UTAMA:")
+print("• Auto detect mob - Cari mob otomatis")
+print("• Kill Aura - Serang semua mob dalam radius")
+print("• Floating - Terbang ke belakang mob")
+print("• ESP - Lihat mob tembus pandang")
+print("=================================")
