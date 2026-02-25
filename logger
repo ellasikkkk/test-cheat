@@ -1,6 +1,7 @@
 -- =============================================
--- SCRIPT GAME STRUCTURE LOGGER - DEEP SCAN V2
+-- SCRIPT GAME STRUCTURE LOGGER - DEEP SCAN V2 (FIXED)
 -- Membedakan NPC dan MOB, menampilkan semua nama unik
+-- FIX: Error nil value di line 382
 -- =============================================
 
 local player = game.Players.LocalPlayer
@@ -36,17 +37,11 @@ local NPC_KEYWORDS = {
     "guide", "elder", "shaman", "healer", "smith", "farmer", "fisherman",
     "miner", "hunter", "chef", "baker", "alchemist", "enchanter", "armorer",
     "weaponsmith", "jeweler", "tailor", "leatherworker", "carpenter",
-    "stable master", "flight master", "auctioneer", "postman", "guardian",
-    "sentinel", "watchman", "patrol", "recruiter", "advisor", "councilor",
-    "diplomat", "ambassador", "herald", "scribe", "librarian", "scholar",
-    "teacher", "mentor", "apprentice", "student", "novice", "initiate",
-    "acolyte", "disciple", "follower", "convert", "believer", "worshipper",
     
     -- Bahasa Indonesia
     "pedagang", "penjual", "toko", "penjaga", "bank", "pandu", "pemimpin",
     "dukun", "penyembuh", "pandai besi", "tukang", "nelayan", "penambang",
     "pemburu", "koki", "tukang roti", "alkemis", "penyihir", "guru",
-    "murid", "pengawal", "satpam"
 }
 
 -- =============================================
@@ -190,9 +185,22 @@ local function detectRemotes()
 end
 
 -- =============================================
+-- FUNGSI UNTUK MENGURUTKAN TABLE
+-- =============================================
+local function getSortedKeys(tbl)
+    local keys = {}
+    if not tbl then return keys end
+    for key, _ in pairs(tbl) do
+        table.insert(keys, key)
+    end
+    table.sort(keys)
+    return keys
+end
+
+-- =============================================
 -- MAIN LOGGER
 -- =============================================
-logSection("GAME STRUCTURE LOGGER - DEEP SCAN V2")
+logSection("GAME STRUCTURE LOGGER - DEEP SCAN V2 (FIXED)")
 logInfo("Game ID", game.PlaceId)
 logInfo("Game Name", game.Name)
 logInfo("Player", player.Name)
@@ -254,14 +262,8 @@ if #npcDetails > 0 then
     logSuccess("Total NPC Ditemukan", #npcDetails)
     print("\n📋 DAFTAR NAMA NPC (UNIK):")
     
-    -- Urutkan berdasarkan abjad
-    local sortedNames = {}
-    for name, _ in pairs(npcNames) do
-        table.insert(sortedNames, name)
-    end
-    table.sort(sortedNames)
-    
-    for i, name in ipairs(sortedNames) do
+    local sortedNPCS = getSortedKeys(npcNames)
+    for i, name in ipairs(sortedNPCS) do
         print("    " .. i .. ". " .. name)
     end
     
@@ -286,13 +288,7 @@ if #mobDetails > 0 then
     print("\n📋 DAFTAR NAMA MOB (UNIK) - " .. #mobDetails .. " jenis mob:")
     print("   (Copy daftar ini untuk filter)\n")
     
-    -- Urutkan berdasarkan abjad
-    local sortedMobs = {}
-    for name, _ in pairs(mobNames) do
-        table.insert(sortedMobs, name)
-    end
-    table.sort(sortedMobs)
-    
+    local sortedMobs = getSortedKeys(mobNames)
     for i, name in ipairs(sortedMobs) do
         print("    " .. i .. ". " .. name)
     end
@@ -368,26 +364,23 @@ print("Damage Method:", detectDamageMethods()[1] or "HEALTH_DIRECT")
 
 print("\n📌 DATA NPC (" .. #npcDetails .. " total, " .. (#npcNames and #npcNames or 0) .. " jenis):")
 if #npcDetails > 0 then
-    local npcList = {}
-    for name, _ in pairs(npcNames) do
-        table.insert(npcList, name)
-    end
-    table.sort(npcList)
+    local npcList = getSortedKeys(npcNames)
     print("Contoh NPC:", npcList[1] or "-")
     print("Jumlah Jenis NPC:", #npcList)
 else
     print("Tidak ada NPC terdeteksi")
 end
 
-print("\n📌 DATA MOB (" .. #mobDetails .. " total, " .. (#sortedMobs or 0) .. " jenis):")
+print("\n📌 DATA MOB (" .. #mobDetails .. " total, " .. (#mobNames or 0) .. " jenis):")
 if #mobDetails > 0 then
+    local mobList = getSortedKeys(mobNames)
     print("Total Mob Ditemukan:", #mobDetails)
-    print("Jenis Mob (Unik):", #sortedMobs)
+    print("Jenis Mob (Unik):", #mobList)
     print("\n📋 DAFTAR LENGKAP NAMA MOB (UNTUK FILTER):")
     print("targetMobFilters = {")
-    for i, name in ipairs(sortedMobs) do
+    for i, name in ipairs(mobList) do
         local line = '    "' .. name .. '"'
-        if i < #sortedMobs then
+        if i < #mobList then
             line = line .. ","
         end
         print(line)
@@ -395,20 +388,20 @@ if #mobDetails > 0 then
     print("}")
     
     print("\n📋 DAFTAR NPC (UNTUK DIHINDARI):")
-    print("npcNames = {")
-    local npcList = {}
-    for name, _ in pairs(npcNames) do
-        table.insert(npcList, name)
-    end
-    table.sort(npcList)
-    for i, name in ipairs(npcList) do
-        local line = '    "' .. name .. '"'
-        if i < #npcList then
-            line = line .. ","
+    local npcList = getSortedKeys(npcNames)
+    if #npcList > 0 then
+        print("npcNames = {")
+        for i, name in ipairs(npcList) do
+            local line = '    "' .. name .. '"'
+            if i < #npcList then
+                line = line .. ","
+            end
+            print(line)
         end
-        print(line)
+        print("}")
+    else
+        print("npcNames = {}  -- Tidak ada NPC")
     end
-    print("}")
 else
     print("Tidak ada mob terdeteksi")
 end
@@ -449,42 +442,42 @@ print("local GAME_CONFIG = {")
 print("    rootPartName = \"HumanoidRootPart\",")
 print("    humanoidName = \"Humanoid\",")
 print("    damageMethod = \"" .. (detectDamageMethods()[1] or "HEALTH_DIRECT") .. "\",")
-print("    ")
+print("")
 
 -- Daftar mob untuk filter
-print("    -- DAFTAR MOB YANG BOLEH DISERANG")
-print("    targetMobs = {")
-local sortedMobs = {}
-for name, _ in pairs(mobNames) do
-    table.insert(sortedMobs, name)
-end
-table.sort(sortedMobs)
-for i, name in ipairs(sortedMobs) do
-    local line = '        "' .. name .. '"'
-    if i < #sortedMobs then
-        line = line .. ","
+if #mobDetails > 0 then
+    local mobList = getSortedKeys(mobNames)
+    print("    -- DAFTAR MOB YANG BOLEH DISERANG")
+    print("    targetMobs = {")
+    for i, name in ipairs(mobList) do
+        local line = '        "' .. name .. '"'
+        if i < #mobList then
+            line = line .. ","
+        end
+        print(line)
     end
-    print(line)
+    print("    },")
+else
+    print("    targetMobs = {},  -- Tidak ada mob terdeteksi")
 end
-print("    },")
 print("")
 
 -- Daftar NPC untuk dihindari
-print("    -- DAFTAR NPC YANG DIHINDARI")
-print("    npcNames = {")
-local npcList = {}
-for name, _ in pairs(npcNames) do
-    table.insert(npcList, name)
-end
-table.sort(npcList)
-for i, name in ipairs(npcList) do
-    local line = '        "' .. name .. '"'
-    if i < #npcList then
-        line = line .. ","
+if #npcDetails > 0 then
+    local npcList = getSortedKeys(npcNames)
+    print("    -- DAFTAR NPC YANG DIHINDARI")
+    print("    npcNames = {")
+    for i, name in ipairs(npcList) do
+        local line = '        "' .. name .. '"'
+        if i < #npcList then
+            line = line .. ","
+        end
+        print(line)
     end
-    print(line)
+    print("    },")
+else
+    print("    npcNames = {},  -- Tidak ada NPC")
 end
-print("    },")
 print("")
 
 -- Folder penting
