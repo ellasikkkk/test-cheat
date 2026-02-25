@@ -1,0 +1,518 @@
+-- =============================================
+-- SCRIPT GAME STRUCTURE LOGGER - SUPER LENGKAP
+-- Mendeteksi SEMUA informasi untuk membuat script
+-- Hasil akhir berupa rangkuman data siap kirim
+-- =============================================
+
+local player = game.Players.LocalPlayer
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local players = game:GetService("Players")
+local runService = game:GetService("RunService")
+local lighting = game:GetService("Lighting")
+
+-- Fungsi formatting
+local function logSection(title)
+    print("\n" .. string.rep("=", 60))
+    print("📋 " .. title)
+    print(string.rep("=", 60))
+end
+
+local function logInfo(label, value)
+    print("  • " .. label .. ": " .. tostring(value))
+end
+
+local function logSuccess(label, value)
+    print("  ✅ " .. label .. ": " .. tostring(value))
+end
+
+local function logWarning(label, value)
+    print("  ⚠️ " .. label .. ": " .. tostring(value))
+end
+
+local function logData(label, value)
+    print("  📊 " .. label .. ": " .. tostring(value))
+end
+
+-- =============================================
+-- FUNGSI SCAN MOB REKURSIF (PALING TELITI)
+-- =============================================
+local scannedMobs = {}
+local scannedNPCs = {}
+local scannedFolders = {}
+local mobLocations = {}
+
+local function scanForMobs(container, path, depth)
+    depth = depth or 0
+    if depth > 10 then return end  -- Batasi kedalaman
+    
+    for _, obj in ipairs(container:GetChildren()) do
+        local currentPath = path .. "/" .. obj.Name
+        
+        -- Catat folder
+        if obj:IsA("Folder") then
+            table.insert(scannedFolders, {
+                name = obj.Name,
+                path = currentPath,
+                childCount = #obj:GetChildren()
+            })
+            scanForMobs(obj, currentPath, depth + 1)
+        end
+        
+        -- Cek model dengan Humanoid
+        if obj:IsA("Model") then
+            local humanoid = obj:FindFirstChild("Humanoid")
+            if humanoid then
+                -- Cek apakah ini player
+                if players:GetPlayerFromCharacter(obj) then
+                    -- Ini player, skip
+                else
+                    -- Deteksi jenis (NPC atau Mob)
+                    local name = obj.Name:lower()
+                    local isNPC = false
+                    local npcKeywords = {"npc", "merchant", "shop", "trader", "guard", "banker", 
+                                         "penjual", "pedagang", "toko", "quest", "trainer"}
+                    
+                    for _, keyword in ipairs(npcKeywords) do
+                        if name:find(keyword) then
+                            isNPC = true
+                            break
+                        end
+                    end
+                    
+                    -- Deteksi root part
+                    local rootPart = obj:FindFirstChild("HumanoidRootPart") or 
+                                     obj:FindFirstChild("Torso") or 
+                                     obj:FindFirstChild("UpperTorso") or
+                                     obj:FindFirstChild("LowerTorso") or
+                                     obj:FindFirstChildOfClass("BasePart")
+                    
+                    local mobData = {
+                        name = obj.Name,
+                        path = currentPath,
+                        humanoid = humanoid,
+                        rootPart = rootPart,
+                        health = humanoid.Health,
+                        maxHealth = humanoid.MaxHealth,
+                        isNPC = isNPC,
+                        position = rootPart and rootPart.Position or "unknown",
+                        folder = container.Name
+                    }
+                    
+                    if isNPC then
+                        table.insert(scannedNPCs, mobData)
+                    else
+                        table.insert(scannedMobs, mobData)
+                        if rootPart then
+                            table.insert(mobLocations, {
+                                name = obj.Name,
+                                position = rootPart.Position,
+                                path = currentPath
+                            })
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- =============================================
+-- FUNGSI DETEKSI DAMAGE METHOD
+-- =============================================
+local function detectDamageMethods()
+    local methods = {}
+    
+    -- Cek dari karakter player
+    if player.Character and player.Character:FindFirstChild("Humanoid") then
+        local hum = player.Character.Humanoid
+        
+        -- Test HEALTH_DIRECT
+        local canDirect = pcall(function()
+            local old = hum.Health
+            hum.Health = old
+            return true
+        end)
+        if canDirect then table.insert(methods, "HEALTH_DIRECT") end
+        
+        -- Test TAKE_DAMAGE
+        if hum.TakeDamage then
+            table.insert(methods, "TAKE_DAMAGE")
+        end
+    end
+    
+    return methods
+end
+
+-- =============================================
+-- FUNGSI DETEKSI REMOTE EVENTS
+-- =============================================
+local function detectRemotes()
+    local remotes = {
+        attack = {},
+        damage = {},
+        sell = {},
+        buy = {},
+        teleport = {},
+        other = {}
+    }
+    
+    local function categorizeRemote(name)
+        name = name:lower()
+        if name:find("attack") or name:find("serang") then
+            return "attack"
+        elseif name:find("damage") or name:find("hit") then
+            return "damage"
+        elseif name:find("sell") or name:find("jual") then
+            return "sell"
+        elseif name:find("buy") or name:find("beli") then
+            return "buy"
+        elseif name:find("teleport") or name:find("tp") or name:find("pindah") then
+            return "teleport"
+        else
+            return "other"
+        end
+    end
+    
+    -- Scan ReplicatedStorage
+    for _, obj in ipairs(replicatedStorage:GetChildren()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            local category = categorizeRemote(obj.Name)
+            table.insert(remotes[category], {
+                name = obj.Name,
+                type = obj.ClassName,
+                location = "ReplicatedStorage"
+            })
+        end
+    end
+    
+    -- Scan PlayerScripts
+    if player:FindFirstChild("PlayerScripts") then
+        for _, obj in ipairs(player.PlayerScripts:GetChildren()) do
+            if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                local category = categorizeRemote(obj.Name)
+                table.insert(remotes[category], {
+                    name = obj.Name,
+                    type = obj.ClassName,
+                    location = "PlayerScripts"
+                })
+            end
+        end
+    end
+    
+    return remotes
+end
+
+-- =============================================
+-- FUNGSI DETEKSI TELEPORT POINTS
+-- =============================================
+local function detectTeleportPoints()
+    local points = {}
+    
+    for _, obj in ipairs(workspace:GetChildren()) do
+        local name = obj.Name:lower()
+        if obj:IsA("Part") or obj:IsA("Model") then
+            if name:find("portal") or name:find("door") or name:find("gate") or
+               name:find("pintu") or name:find("teleport") or name:find("warp") or
+               name:find("spawn") or name:find("zone") then
+                table.insert(points, {
+                    name = obj.Name,
+                    position = obj:IsA("Part") and obj.Position or (obj:FindFirstChild("HumanoidRootPart") and obj.HumanoidRootPart.Position),
+                    type = obj.ClassName
+                })
+            end
+        end
+    end
+    
+    return points
+end
+
+-- =============================================
+-- FUNGSI DETEKSI AUTO SELL
+-- =============================================
+local function detectAutoSell()
+    local merchants = {}
+    
+    for _, obj in ipairs(workspace:GetChildren()) do
+        local name = obj.Name:lower()
+        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") then
+            if name:find("merchant") or name:find("pedagang") or name:find("shop") or
+               name:find("trader") or name:find("penjual") or name:find("toko") then
+                table.insert(merchants, {
+                    name = obj.Name,
+                    position = obj:FindFirstChild("HumanoidRootPart") and obj.HumanoidRootPart.Position,
+                    rootPart = obj:FindFirstChild("HumanoidRootPart") and "HumanoidRootPart" or "Torso"
+                })
+            end
+        end
+    end
+    
+    return merchants
+end
+
+-- =============================================
+-- FUNGSI DETEKSI ANIMASI
+-- =============================================
+local function detectAnimations()
+    local anims = {}
+    
+    if player.Character and player.Character:FindFirstChild("Humanoid") then
+        local animator = player.Character.Humanoid:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                table.insert(anims, {
+                    name = track.Name,
+                    id = track.Animation.AnimationId,
+                    length = track.Length
+                })
+            end
+        end
+    end
+    
+    return anims
+end
+
+-- =============================================
+-- MAIN LOGGER EXECUTION
+-- =============================================
+logSection("GAME STRUCTURE LOGGER - SUPER LENGKAP")
+logInfo("Game ID", game.PlaceId)
+logInfo("Game Name", game.Name)
+logInfo("Creator", game.CreatorId)
+logInfo("Timestamp", os.date("%Y-%m-%d %H:%M:%S"))
+logInfo("Player", player.Name)
+
+-- =============================================
+-- 1. INFORMASI KARAKTER
+-- =============================================
+logSection("INFORMASI KARAKTER")
+
+if player.Character then
+    logSuccess("Nama Karakter", player.Character.Name)
+    
+    -- Root Part
+    local rootPart = player.Character:FindFirstChild("HumanoidRootPart") and "HumanoidRootPart" or
+                     player.Character:FindFirstChild("Torso") and "Torso" or
+                     player.Character:FindFirstChild("UpperTorso") and "UpperTorso" or
+                     "Tidak ditemukan"
+    logSuccess("Root Part Name", rootPart)
+    
+    -- Humanoid
+    local humanoid = player.Character:FindFirstChild("Humanoid")
+    if humanoid then
+        logInfo("Health", humanoid.Health .. "/" .. humanoid.MaxHealth)
+        logInfo("Walk Speed", humanoid.WalkSpeed)
+        logInfo("Jump Power", humanoid.JumpPower)
+        
+        local methods = detectDamageMethods()
+        logInfo("Damage Methods", table.concat(methods, ", "))
+    end
+end
+
+-- =============================================
+-- 2. SCAN MOB DAN NPC (DEEP SCAN)
+-- =============================================
+logSection("DEEP SCAN - MOB & NPC")
+
+-- Reset data
+scannedMobs = {}
+scannedNPCs = {}
+scannedFolders = {}
+mobLocations = {}
+
+-- Lakukan scan mendalam
+scanForMobs(workspace, "workspace")
+
+-- Tampilkan folder yang ditemukan
+if #scannedFolders > 0 then
+    logSuccess("Folder Ditemukan", #scannedFolders)
+    for i, folder in ipairs(scannedFolders) do
+        print("    📁 " .. folder.name .. " (" .. folder.childCount .. " items) - " .. folder.path)
+    end
+end
+
+-- Tampilkan NPC
+if #scannedNPCs > 0 then
+    logSuccess("NPC Ditemukan", #scannedNPCs)
+    for i, npc in ipairs(scannedNPCs) do
+        print("\n    👤 NPC #" .. i .. ": " .. npc.name)
+        print("        Lokasi: " .. npc.path)
+        print("        Health: " .. npc.health .. "/" .. npc.maxHealth)
+        print("        Root Part: " .. (npc.rootPart and npc.rootPart.Name or "tidak ada"))
+    end
+end
+
+-- Tampilkan MOB
+if #scannedMobs > 0 then
+    logSuccess("MOB Ditemukan", #scannedMobs)
+    for i, mob in ipairs(scannedMobs) do
+        print("\n    ⚔️ Mob #" .. i .. ": " .. mob.name)
+        print("        Lokasi: " .. mob.path)
+        print("        Health: " .. mob.health .. "/" .. mob.maxHealth)
+        print("        Posisi: " .. (mob.position ~= "unknown" and string.format("X=%.1f, Y=%.1f, Z=%.1f", mob.position.X, mob.position.Y, mob.position.Z) or "unknown"))
+        print("        Root Part: " .. (mob.rootPart and mob.rootPart.Name or "tidak ada"))
+    end
+else
+    logWarning("MOB", "TIDAK ADA MOB TERDETEKSI!")
+    print("\n    ⚠️ Kemungkinan penyebab:")
+    print("    1. Berada di area aman (spawn)")
+    print("    2. Mob menggunakan sistem spawn dinamis")
+    print("    3. Game tidak memiliki mob")
+end
+
+-- =============================================
+-- 3. REMOTE EVENTS
+-- =============================================
+logSection("REMOTE EVENTS")
+
+local remotes = detectRemotes()
+local totalRemotes = 0
+
+for category, list in pairs(remotes) do
+    if #list > 0 then
+        logSuccess("Remote " .. category:upper(), #list)
+        for _, remote in ipairs(list) do
+            print("    📡 " .. remote.name .. " (" .. remote.type .. ") - " .. remote.location)
+            totalRemotes = totalRemotes + 1
+        end
+    end
+end
+
+if totalRemotes == 0 then
+    logInfo("Remote Events", "Tidak ditemukan")
+end
+
+-- =============================================
+-- 4. TELEPORT POINTS
+-- =============================================
+logSection("TELEPORT POINTS")
+
+local teleportPoints = detectTeleportPoints()
+if #teleportPoints > 0 then
+    logSuccess("Teleport Points Ditemukan", #teleportPoints)
+    for i, point in ipairs(teleportPoints) do
+        print("\n    🚪 Point #" .. i .. ": " .. point.name)
+        print("        Tipe: " .. point.type)
+        if point.position then
+            print(string.format("        Posisi: X=%.1f, Y=%.1f, Z=%.1f", point.position.X, point.position.Y, point.position.Z))
+        end
+    end
+else
+    logInfo("Teleport Points", "Tidak ditemukan")
+end
+
+-- =============================================
+-- 5. AUTO SELL INFO
+-- =============================================
+logSection("AUTO SELL INFO")
+
+local merchants = detectAutoSell()
+if #merchants > 0 then
+    logSuccess("Merchant Ditemukan", #merchants)
+    for i, merchant in ipairs(merchants) do
+        print("\n    💰 Merchant #" .. i .. ": " .. merchant.name)
+        if merchant.position then
+            print(string.format("        Posisi: X=%.1f, Y=%.1f, Z=%.1f", merchant.position.X, merchant.position.Y, merchant.position.Z))
+        end
+        print("        Root Part: " .. merchant.rootPart)
+    end
+else
+    logInfo("Merchant", "Tidak ditemukan")
+end
+
+-- =============================================
+-- 6. ANIMASI
+-- =============================================
+logSection("ANIMASI")
+
+local anims = detectAnimations()
+if #anims > 0 then
+    logSuccess("Animasi Aktif", #anims)
+    for _, anim in ipairs(anims) do
+        print("    🎬 " .. anim.name .. " (" .. anim.length .. "s)")
+    end
+end
+
+-- =============================================
+-- 7. RANGKUMAN DATA (UNTUK DIKIRIM KE SAYA)
+-- =============================================
+logSection("📊 RANGKUMAN DATA - COPY INI KE SAYA")
+
+print([[
+==================================================
+            HASIL SCAN GAME
+==================================================
+]])
+
+print("📌 INFORMASI DASAR:")
+print("Game ID:", game.PlaceId)
+print("Game Name:", game.Name)
+print("Player:", player.Name)
+print("Root Part:", player.Character and (player.Character:FindFirstChild("HumanoidRootPart") and "HumanoidRootPart" or "Torso") or "Unknown")
+
+print("\n📌 DATA MOB:")
+if #scannedMobs > 0 then
+    print("Total Mob Ditemukan:", #scannedMobs)
+    print("Contoh Mob:", scannedMobs[1] and scannedMobs[1].name or "-")
+    print("Lokasi Mob:", scannedMobs[1] and scannedMobs[1].path or "-")
+else
+    print("⚠️ TIDAK ADA MOB TERDETEKSI")
+    print("   Kemungkinan di folder:", scannedFolders[1] and scannedFolders[1].name or "tidak ada folder")
+end
+
+print("\n📌 REMOTE PENTING:")
+local attackRemotes = {}
+for _, remote in ipairs(remotes.attack) do table.insert(attackRemotes, remote.name) end
+for _, remote in ipairs(remotes.damage) do table.insert(attackRemotes, remote.name) end
+
+if #attackRemotes > 0 then
+    print("Remote untuk Attack/Damage:")
+    for i, name in ipairs(attackRemotes) do
+        print("  -", name)
+    end
+else
+    print("Tidak ada remote attack spesifik")
+end
+
+print("\n📌 DAMAGE METHOD:")
+print(detectDamageMethods()[1] or "HEALTH_DIRECT (default)")
+
+print("\n📌 FOLDER PENTING:")
+for i = 1, math.min(5, #scannedFolders) do
+    print("  -", scannedFolders[i].name)
+end
+
+print("\n==================================================")
+print("✅ KIRIMKAN DATA DI ATAS KE SAYA")
+print("==================================================")
+
+-- =============================================
+-- 8. READY-TO-USE CONFIG
+-- =============================================
+logSection("READY-TO-USE CONFIGURATION")
+
+print("\n-- Copy paste ini ke script Anda:\n")
+print("local GAME_CONFIG = {")
+print("    rootPartName = \"" .. (player.Character and (player.Character:FindFirstChild("HumanoidRootPart") and "HumanoidRootPart" or "Torso") or "HumanoidRootPart") .. "\",")
+print("    humanoidName = \"Humanoid\",")
+print("    damageMethod = \"" .. (detectDamageMethods()[1] or "HEALTH_DIRECT") .. "\",")
+print("    attackRemotes = {")
+for i, name in ipairs(attackRemotes) do
+    print("        \"" .. name .. "\",")
+end
+print("    },")
+print("    mobFolders = {")
+for i, folder in ipairs(scannedFolders) do
+    print("        \"" .. folder.name .. "\",")
+end
+print("    },")
+print("    mobNames = {")
+for i, mob in ipairs(scannedMobs) do
+    if i <= 10 then
+        print("        \"" .. mob.name .. "\",")
+    end
+end
+print("    }")
+print("}")
+
+logSection("LOGGING COMPLETE")
+print("\n✅ SCAN SELESAI! Kirim bagian RANGKUMAN DATA ke saya.")
