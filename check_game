@@ -1,0 +1,455 @@
+-- =============================================
+-- SCRIPT GAME STRUCTURE LOGGER
+-- Mendeteksi dan menampilkan struktur game secara otomatis
+-- =============================================
+
+local player = game.Players.LocalPlayer
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local players = game:GetService("Players")
+
+-- Fungsi untuk membuat log dengan format rapi
+local function logSection(title)
+    print("=================================")
+    print("📋 " .. title)
+    print("=================================")
+end
+
+local function logInfo(label, value)
+    print("  • " .. label .. ": " .. tostring(value))
+end
+
+local function logSuccess(label, value)
+    print("  ✅ " .. label .. ": " .. tostring(value))
+end
+
+local function logWarning(label, value)
+    print("  ⚠️ " .. label .. ": " .. tostring(value))
+end
+
+local function logError(label, value)
+    print("  ❌ " .. label .. ": " .. tostring(value))
+end
+
+-- =============================================
+-- 1. DETEKSI ROOT PART
+-- =============================================
+local function detectRootPartName(model)
+    if not model then return "No Model" end
+    
+    local possibleNames = {
+        "HumanoidRootPart",  -- Paling umum
+        "Torso",             -- Legacy R6
+        "UpperTorso",        -- R15
+        "LowerTorso", 
+        "RootPart",
+        "Hips",
+        "Pelvis",
+        "Chest"
+    }
+    
+    for _, name in ipairs(possibleNames) do
+        local part = model:FindFirstChild(name)
+        if part and part:IsA("BasePart") then
+            return name
+        end
+    end
+    
+    -- Jika tidak ada yang cocok, cari BasePart pertama
+    for _, child in ipairs(model:GetChildren()) do
+        if child:IsA("BasePart") then
+            return child.Name
+        end
+    end
+    
+    return "Tidak ditemukan"
+end
+
+-- =============================================
+-- 2. DETEKSI DAMAGE METHOD
+-- =============================================
+local function detectDamageMethod(humanoid)
+    if not humanoid then return "No Humanoid" end
+    
+    local methods = {}
+    
+    -- Cek apakah bisa langsung set health
+    local canSetHealth = pcall(function()
+        local oldHealth = humanoid.Health
+        humanoid.Health = oldHealth
+        return true
+    end)
+    
+    if canSetHealth then
+        table.insert(methods, "HEALTH_DIRECT")
+    end
+    
+    -- Cek apakah punya method TakeDamage
+    if humanoid.TakeDamage then
+        table.insert(methods, "TAKE_DAMAGE")
+    end
+    
+    -- Cek apakah ada event health berubah
+    if humanoid:GetPropertyChangedSignal("Health") then
+        table.insert(methods, "HEALTH_EVENT")
+    end
+    
+    return methods
+end
+
+-- =============================================
+-- 3. DETEKSI REMOTE EVENTS
+-- =============================================
+local function findRemoteEvents()
+    local remotes = {
+        replicated = {},
+        playerScripts = {},
+        workspace = {},
+        other = {}
+    }
+    
+    -- Cek di ReplicatedStorage
+    for _, obj in ipairs(replicatedStorage:GetChildren()) do
+        if obj:IsA("RemoteEvent") then
+            table.insert(remotes.replicated, obj)
+        elseif obj:IsA("RemoteFunction") then
+            table.insert(remotes.replicated, obj)  -- RemoteFunction juga penting
+        end
+    end
+    
+    -- Cek di PlayerScripts
+    if player.PlayerScripts then
+        for _, obj in ipairs(player.PlayerScripts:GetChildren()) do
+            if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                table.insert(remotes.playerScripts, obj)
+            end
+        end
+    end
+    
+    -- Cek di Workspace (jarang, tapi mungkin)
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            table.insert(remotes.workspace, obj)
+        end
+    end
+    
+    return remotes
+end
+
+-- =============================================
+-- 4. DETEKSI NPC/MOB PATTERNS
+-- =============================================
+local function detectMobPatterns()
+    local patterns = {
+        npcNames = {},
+        mobNames = {},
+        commonFolders = {},
+        hasHealth = {},
+        hasHumanoid = {}
+    }
+    
+    -- Scan workspace untuk mencari model dengan Humanoid
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Model") then
+            local humanoid = obj:FindFirstChild("Humanoid")
+            if humanoid then
+                -- Cek apakah ini player atau bukan
+                if not players:GetPlayerFromCharacter(obj) then
+                    -- Ini kemungkinan mob/NPC
+                    local name = obj.Name
+                    
+                    -- Deteksi berdasarkan nama
+                    if name:lower():find("npc") or name:lower():find("pedagang") then
+                        table.insert(patterns.npcNames, name)
+                    else
+                        table.insert(patterns.mobNames, name)
+                    end
+                    
+                    table.insert(patterns.hasHumanoid, name)
+                    
+                    -- Cek apakah punya health
+                    if humanoid.Health then
+                        table.insert(patterns.hasHealth, name)
+                    end
+                end
+            end
+        end
+        
+        -- Cek folder yang mungkin berisi mob
+        if obj:IsA("Folder") and (obj.Name:lower():find("mob") or obj.Name:lower():find("npc") or obj.Name:lower():find("enemy")) then
+            table.insert(patterns.commonFolders, obj.Name)
+        end
+    end
+    
+    return patterns
+end
+
+-- =============================================
+-- 5. DETEKSI ANIMATIONS
+-- =============================================
+local function detectAnimations(character)
+    if not character then return {} end
+    
+    local anims = {}
+    
+    -- Cek Animator
+    local humanoid = character:FindFirstChild("Humanoid")
+    if humanoid then
+        local animator = humanoid:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                table.insert(anims, {
+                    name = track.Name,
+                    animationId = track.Animation.AnimationId
+                })
+            end
+        end
+    end
+    
+    return anims
+end
+
+-- =============================================
+-- 6. MAIN LOGGER FUNCTION
+-- =============================================
+local function runGameStructureLogger()
+    logSection("GAME STRUCTURE LOGGER")
+    logInfo("Game ID", game.PlaceId)
+    logInfo("Game Name", game.Name)
+    logInfo("Creator", game.CreatorId)
+    logInfo("Timestamp", os.date("%Y-%m-%d %H:%M:%S"))
+    
+    -- =========================================
+    -- KARAKTER PLAYER
+    -- =========================================
+    logSection("KARAKTER PLAYER")
+    
+    local character = player.Character
+    if character then
+        logSuccess("Nama Karakter", character.Name)
+        
+        -- Root Part
+        local rootName = detectRootPartName(character)
+        logSuccess("Root Part Name", rootName)
+        
+        -- Semua part
+        logInfo("Semua Part dalam Karakter:")
+        for _, child in ipairs(character:GetChildren()) do
+            if child:IsA("BasePart") then
+                print("      - " .. child.Name .. " (" .. child.ClassName .. ")")
+            end
+        end
+        
+        -- Humanoid
+        local humanoid = character:FindFirstChild("Humanoid")
+        if humanoid then
+            logSuccess("Humanoid", "Ditemukan")
+            logInfo("  Max Health", humanoid.MaxHealth)
+            logInfo("  Current Health", humanoid.Health)
+            logInfo("  Walk Speed", humanoid.WalkSpeed)
+            logInfo("  Jump Power", humanoid.JumpPower)
+            
+            -- Damage methods
+            local methods = detectDamageMethod(humanoid)
+            logInfo("  Damage Methods", table.concat(methods, ", "))
+            
+            -- Animations
+            local anims = detectAnimations(character)
+            logInfo("  Active Animations", #anims)
+        else
+            logError("Humanoid", "Tidak ditemukan")
+        end
+    else
+        logError("Karakter", "Belum spawn")
+    end
+    
+    -- =========================================
+    -- MOB/NPC TERDEKAT
+    -- =========================================
+    logSection("MOB/NPC TERDEKAT")
+    
+    local mobsFound = 0
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
+            mobsFound = mobsFound + 1
+            if mobsFound <= 5 then  -- Batasi 5 saja biar tidak terlalu panjang
+                print("\n  📍 Mob #" .. mobsFound .. ": " .. obj.Name)
+                
+                local rootName = detectRootPartName(obj)
+                print("      Root Part: " .. rootName)
+                
+                local humanoid = obj:FindFirstChild("Humanoid")
+                if humanoid then
+                    print("      Health: " .. humanoid.Health .. "/" .. humanoid.MaxHealth)
+                end
+                
+                -- Tampilkan part unik
+                for _, child in ipairs(obj:GetChildren()) do
+                    if child:IsA("BasePart") and child.Name ~= rootName then
+                        print("      Part: " .. child.Name)
+                    end
+                end
+            end
+        end
+    end
+    logInfo("Total Mob di Workspace", mobsFound)
+    
+    -- =========================================
+    -- REMOTE EVENTS
+    -- =========================================
+    logSection("REMOTE EVENTS")
+    
+    local remotes = findRemoteEvents()
+    
+    -- ReplicatedStorage
+    if #remotes.replicated > 0 then
+        logSuccess("ReplicatedStorage", #remotes.replicated .. " remote(s)")
+        for _, remote in ipairs(remotes.replicated) do
+            local name = remote.Name:lower()
+            local icon = "📡"
+            if name:find("attack") or name:find("damage") or name:find("hit") then
+                icon = "⚔️"
+            elseif name:find("move") or name:find("walk") then
+                icon = "🚶"
+            elseif name:find("chat") or name:find("say") then
+                icon = "💬"
+            end
+            print("    " .. icon .. " " .. remote.Name .. " (" .. remote.ClassName .. ")")
+        end
+    else
+        logWarning("ReplicatedStorage", "Tidak ada remote")
+    end
+    
+    -- PlayerScripts
+    if #remotes.playerScripts > 0 then
+        logSuccess("PlayerScripts", #remotes.playerScripts .. " remote(s)")
+        for _, remote in ipairs(remotes.playerScripts) do
+            print("      - " .. remote.Name)
+        end
+    end
+    
+    -- =========================================
+    -- FOLDER STRUCTURE
+    -- =========================================
+    logSection("FOLDER STRUCTURE")
+    
+    local importantFolders = {}
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Folder") then
+            local name = obj.Name:lower()
+            if name:find("mob") or name:find("npc") or name:find("enemy") or 
+               name:find("spawn") or name:find("zone") or name:find("dungeon") then
+                table.insert(importantFolders, obj.Name)
+            end
+        end
+    end
+    
+    if #importantFolders > 0 then
+        logSuccess("Important Folders Found", #importantFolders)
+        for _, folder in ipairs(importantFolders) do
+            print("    📁 " .. folder)
+        end
+    else
+        logWarning("Important Folders", "Tidak ditemukan")
+    end
+    
+    -- =========================================
+    -- AUTO-DETECTED CONFIGURATION
+    -- =========================================
+    logSection("AUTO-DETECTED CONFIG")
+    
+    -- Buat konfigurasi yang siap pakai
+    local autoConfig = {}
+    
+    -- Root part name
+    if character then
+        autoConfig.rootPartName = detectRootPartName(character)
+        logSuccess("rootPartName", '"' .. autoConfig.rootPartName .. '"')
+    else
+        autoConfig.rootPartName = "HumanoidRootPart"  -- Default
+        logWarning("rootPartName", '"HumanoidRootPart" (default)')
+    end
+    
+    -- Humanoid name
+    autoConfig.humanoidName = "Humanoid"  -- Standar
+    logSuccess("humanoidName", '"Humanoid"')
+    
+    -- Damage method
+    if character and character:FindFirstChild("Humanoid") then
+        local methods = detectDamageMethod(character.Humanoid)
+        if #methods > 0 then
+            autoConfig.damageMethod = methods[1]
+            logSuccess("damageMethod", autoConfig.damageMethod)
+        else
+            autoConfig.damageMethod = "health"
+            logWarning("damageMethod", '"health" (default)')
+        end
+    else
+        autoConfig.damageMethod = "health"
+        logWarning("damageMethod", '"health" (default)')
+    end
+    
+    -- Attack remotes
+    autoConfig.attackRemotes = {}
+    for _, remote in ipairs(remotes.replicated) do
+        local name = remote.Name:lower()
+        if name:find("attack") or name:find("damage") or name:find("hit") or 
+           name:find("swing") or name:find("slash") or name:find("punch") then
+            table.insert(autoConfig.attackRemotes, remote.Name)
+        end
+    end
+    
+    if #autoConfig.attackRemotes > 0 then
+        logSuccess("attackRemotes", #autoConfig.attackRemotes .. " ditemukan")
+        for _, name in ipairs(autoConfig.attackRemotes) do
+            print('      "' .. name .. '",')
+        end
+    else
+        logWarning("attackRemotes", "Tidak ditemukan")
+    end
+    
+    -- NPC filter
+    local patterns = detectMobPatterns()
+    autoConfig.npcNames = patterns.npcNames
+    if #autoConfig.npcNames > 0 then
+        logSuccess("npcNames", #autoConfig.npcNames .. " NPC terdeteksi")
+    end
+    
+    -- =========================================
+    -- READY-TO-USE CONFIG
+    -- =========================================
+    logSection("READY-TO-USE CONFIGURATION")
+    print("\nCopy paste ini ke script Anda:\n")
+    print("local GAME_CONFIG = {")
+    print("    rootPartName = \"" .. autoConfig.rootPartName .. "\",")
+    print("    humanoidName = \"Humanoid\",")
+    print("    damageMethod = \"" .. (autoConfig.damageMethod or "health") .. "\",")
+    print("    attackRemotes = {")
+    for _, name in ipairs(autoConfig.attackRemotes) do
+        print("        \"" .. name .. "\",")
+    end
+    print("    },")
+    print("    npcNames = {")
+    for i = 1, math.min(10, #autoConfig.npcNames) do  -- Batasi 10
+        print("        \"" .. autoConfig.npcNames[i] .. "\",")
+    end
+    print("    }")
+    print("}")
+    
+    logSection("LOGGING COMPLETE")
+end
+
+-- Jalankan logger
+runGameStructureLogger()
+
+-- Tambahkan hotkey untuk menjalankan ulang (tekan L)
+local userInputService = game:GetService("UserInputService")
+userInputService.InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.L then
+        print("\n\n")  -- Spasi
+        print("🔄 RERUNNING GAME STRUCTURE LOGGER...")
+        runGameStructureLogger()
+    end
+end)
+
+print("\n✅ GAME STRUCTURE LOGGER READY")
+print("   Tekan L untuk menjalankan ulang")
