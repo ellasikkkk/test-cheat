@@ -1,6 +1,11 @@
+Saya akan tambahkan **Auto Sell, Anti AFK, dan Kill Aura lengkap** ke dalam logger Anda. Ini dia versi lengkapnya:
+
+## 📋 **LOGGER LENGKAP DENGAN AUTO SELL, ANTI AFK, KILL AURA**
+
+```lua
 -- =============================================
--- SCRIPT GAME STRUCTURE LOGGER - VERSI LENGKAP
--- Mendeteksi Auto Sell, Anti AFK, Kill Aura
+-- SCRIPT GAME STRUCTURE LOGGER
+-- Mendeteksi dan menampilkan struktur game secara otomatis
 -- =============================================
 
 local player = game.Players.LocalPlayer
@@ -28,8 +33,117 @@ local function logWarning(label, value)
     print("  ⚠️ " .. label .. ": " .. tostring(value))
 end
 
+local function logError(label, value)
+    print("  ❌ " .. label .. ": " .. tostring(value))
+end
+
 -- =============================================
--- 1. DETEKSI AUTO SELL
+-- 1. DETEKSI ROOT PART
+-- =============================================
+local function detectRootPartName(model)
+    if not model then return "No Model" end
+    
+    local possibleNames = {
+        "HumanoidRootPart",  -- Paling umum
+        "Torso",             -- Legacy R6
+        "UpperTorso",        -- R15
+        "LowerTorso", 
+        "RootPart",
+        "Hips",
+        "Pelvis",
+        "Chest"
+    }
+    
+    for _, name in ipairs(possibleNames) do
+        local part = model:FindFirstChild(name)
+        if part and part:IsA("BasePart") then
+            return name
+        end
+    end
+    
+    -- Jika tidak ada yang cocok, cari BasePart pertama
+    for _, child in ipairs(model:GetChildren()) do
+        if child:IsA("BasePart") then
+            return child.Name
+        end
+    end
+    
+    return "Tidak ditemukan"
+end
+
+-- =============================================
+-- 2. DETEKSI DAMAGE METHOD
+-- =============================================
+local function detectDamageMethod(humanoid)
+    if not humanoid then return "No Humanoid" end
+    
+    local methods = {}
+    
+    -- Cek apakah bisa langsung set health
+    local canSetHealth = pcall(function()
+        local oldHealth = humanoid.Health
+        humanoid.Health = oldHealth
+        return true
+    end)
+    
+    if canSetHealth then
+        table.insert(methods, "HEALTH_DIRECT")
+    end
+    
+    -- Cek apakah punya method TakeDamage
+    if humanoid.TakeDamage then
+        table.insert(methods, "TAKE_DAMAGE")
+    end
+    
+    -- Cek apakah ada event health berubah
+    if humanoid:GetPropertyChangedSignal("Health") then
+        table.insert(methods, "HEALTH_EVENT")
+    end
+    
+    return methods
+end
+
+-- =============================================
+-- 3. DETEKSI REMOTE EVENTS
+-- =============================================
+local function findRemoteEvents()
+    local remotes = {
+        replicated = {},
+        playerScripts = {},
+        workspace = {},
+        other = {}
+    }
+    
+    -- Cek di ReplicatedStorage
+    for _, obj in ipairs(replicatedStorage:GetChildren()) do
+        if obj:IsA("RemoteEvent") then
+            table.insert(remotes.replicated, obj)
+        elseif obj:IsA("RemoteFunction") then
+            table.insert(remotes.replicated, obj)
+        end
+    end
+    
+    -- Cek di PlayerScripts
+    if player.PlayerScripts then
+        for _, obj in ipairs(player.PlayerScripts:GetChildren()) do
+            if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                table.insert(remotes.playerScripts, obj)
+            end
+        end
+    end
+    
+    -- Cek di Workspace
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            table.insert(remotes.workspace, obj)
+        end
+    end
+    
+    return remotes
+end
+
+-- =============================================
+-- 4. DETEKSI AUTO SELL
 -- =============================================
 local function detectAutoSellInfo()
     logSection("AUTO SELL DETECTION")
@@ -37,10 +151,10 @@ local function detectAutoSellInfo()
     local sellInfo = {
         merchants = {},
         sellRemotes = {},
-        itemValues = {},
-        shopFolders = {},
         currencyType = "Gold",
-        sellMethod = "unknown"
+        shopFolders = {},
+        itemValues = {},
+        npcShops = {}
     }
     
     -- Cari NPC Merchant/Pedagang
@@ -49,11 +163,15 @@ local function detectAutoSellInfo()
             local name = obj.Name:lower()
             if name:find("merchant") or name:find("pedagang") or name:find("shop") or 
                name:find("trader") or name:find("seller") or name:find("vendor") or
-               name:find("penjual") or name:find("toko") then
-                table.insert(sellInfo.merchants, {
+               name:find("penjual") or name:find("toko") or name:find("blacksmith") then
+                
+                local merchantInfo = {
                     name = obj.Name,
-                    position = obj:FindFirstChild("HumanoidRootPart") and obj.HumanoidRootPart.Position or "unknown"
-                })
+                    position = obj:FindFirstChild("HumanoidRootPart") and obj.HumanoidRootPart.Position or "unknown",
+                    rootPart = detectRootPartName(obj)
+                }
+                table.insert(sellInfo.merchants, merchantInfo)
+                table.insert(sellInfo.npcShops, obj.Name)
             end
         end
     end
@@ -62,6 +180,7 @@ local function detectAutoSellInfo()
         logSuccess("Merchant Ditemukan", #sellInfo.merchants)
         for i, merchant in ipairs(sellInfo.merchants) do
             print("    " .. i .. ". " .. merchant.name)
+            print("        Root Part: " .. merchant.rootPart)
         end
     else
         logWarning("Merchant", "Tidak ditemukan")
@@ -73,7 +192,7 @@ local function detectAutoSellInfo()
             local name = obj.Name:lower()
             if name:find("sell") or name:find("jual") or name:find("trade") or 
                name:find("buy") or name:find("beli") or name:find("shop") or
-               name:find("market") or name:find("dagang") then
+               name:find("market") or name:find("dagang") or name:find("currency") then
                 table.insert(sellInfo.sellRemotes, obj.Name)
             end
         end
@@ -86,22 +205,27 @@ local function detectAutoSellInfo()
         end
     end
     
-    -- Cari folder item di inventory/backpack
-    if player:FindFirstChild("Backpack") then
-        logInfo("Backpack Items", #player.Backpack:GetChildren())
-    end
-    
-    -- Cari sistem currency (koin, gold, dll)
+    -- Cek sistem currency
     local leaderstats = player:FindFirstChild("leaderstats")
     if leaderstats then
         logSuccess("Leaderstats Ditemukan", "Ada")
         for _, stat in ipairs(leaderstats:GetChildren()) do
             local name = stat.Name:lower()
             if name:find("gold") or name:find("coin") or name:find("money") or 
-               name:find("uang") or name:find("points") or name:find("cash") then
+               name:find("uang") or name:find("points") or name:find("cash") or
+               name:find("gem") or name:find("crystal") then
                 sellInfo.currencyType = stat.Name
                 logSuccess("Currency Type", stat.Name .. " = " .. tostring(stat.Value))
             end
+        end
+    end
+    
+    -- Cari folder item yang bisa dijual
+    if player:FindFirstChild("Backpack") then
+        logInfo("Backpack Items", #player.Backpack:GetChildren())
+        for i = 1, math.min(5, #player.Backpack:GetChildren()) do
+            local item = player.Backpack:GetChildren()[i]
+            print("    Item di inventory: " .. item.Name)
         end
     end
     
@@ -109,7 +233,7 @@ local function detectAutoSellInfo()
 end
 
 -- =============================================
--- 2. DETEKSI ANTI AFK
+-- 5. DETEKSI ANTI AFK
 -- =============================================
 local function detectAntiAFKInfo()
     logSection("ANTI AFK DETECTION")
@@ -120,13 +244,14 @@ local function detectAntiAFKInfo()
         movementNeeded = true,
         jumpNeeded = false,
         mouseNeeded = true,
-        chatNeeded = false
+        chatNeeded = false,
+        recommendedActions = {}
     }
     
     -- Cari kemungkinan pesan kick AFK
     local kickPhrases = {
         "afk", "idle", "inactive", "diam", "too long",
-        "kick", "disconnect", "timeout", "away"
+        "kick", "disconnect", "timeout", "away", "idle kick"
     }
     
     -- Monitor chat log untuk pesan kick
@@ -136,7 +261,7 @@ local function detectAntiAFKInfo()
     -- Cek timer di PlayerScripts
     if player:FindFirstChild("PlayerScripts") then
         for _, script in ipairs(player.PlayerScripts:GetChildren()) do
-            if script:IsA("LocalScript") then
+            if script:IsA("LocalScript") or script:IsA("ModuleScript") then
                 local source = script.Source or ""
                 for _, phrase in ipairs(kickPhrases) do
                     if source:lower():find(phrase) then
@@ -148,7 +273,7 @@ local function detectAntiAFKInfo()
         end
     end
     
-    -- Cek kebijakan server (biasanya di HttpService)
+    -- Cek kebijakan server
     logInfo("Server Tick Rate", runService:GetPropertyChangedSignal("Stepped") and "Normal" or "Unknown")
     
     -- Deteksi apakah game memonitor gerakan
@@ -162,17 +287,19 @@ local function detectAntiAFKInfo()
         end
     end
     
-    -- Cek sistem anti-AFK umum
-    logSuccess("Anti AFK Recommendations", "")
+    -- Generate rekomendasi anti-AFK
+    print("\n  📋 REKOMENDASI ANTI-AFK:")
     print("    • Gerakkan mouse setiap 5-10 menit")
-    print("    • Lompat sesekali")
-    print("    • Jangan diam di satu tempat terlalu lama")
+    print("    • Lompat sesekali (setiap 3-5 menit)")
+    print("    • Jangan diam di satu tempat >10 menit")
+    print("    • Putar karakter perlahan")
+    print("    • Chat random (jika diizinkan)")
     
     return afkInfo
 end
 
 -- =============================================
--- 3. DETEKSI KILL AURA LENGKAP
+-- 6. DETEKSI KILL AURA LENGKAP
 -- =============================================
 local function detectKillAuraInfo()
     logSection("KILL AURA DETECTION")
@@ -183,9 +310,10 @@ local function detectKillAuraInfo()
         damageRemotes = {},
         damageMethods = {},
         attackCooldowns = {},
-        mobRespawnTime = 0,
         mobHealth = {},
-        mobTags = {}
+        mobRespawnTime = 0,
+        attackAnimations = {},
+        mobSpawnLocations = {}
     }
     
     -- Cari folder tempat mob disimpan
@@ -193,20 +321,35 @@ local function detectKillAuraInfo()
         if obj:IsA("Folder") then
             local name = obj.Name:lower()
             if name:find("mob") or name:find("enemy") or name:find("monster") or 
-               name:find("musuh") or name:find("spawn") or name:find("creature") then
+               name:find("musuh") or name:find("spawn") or name:find("creature") or
+               name:find("npc") then
                 table.insert(killInfo.mobFolders, obj.Name)
                 
                 -- Cek isi folder
                 local mobCount = 0
+                local mobExamples = {}
                 for _, mob in ipairs(obj:GetChildren()) do
                     if mob:IsA("Model") then
                         mobCount = mobCount + 1
-                        if mobCount <= 3 then  -- Batasi 3 contoh
+                        if mobCount <= 5 then
+                            table.insert(mobExamples, mob.Name)
                             table.insert(killInfo.mobNames, mob.Name)
+                            
+                            -- Simpan posisi spawn
+                            local rootPart = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Torso")
+                            if rootPart then
+                                table.insert(killInfo.mobSpawnLocations, {
+                                    name = mob.Name,
+                                    position = rootPart.Position
+                                })
+                            end
                         end
                     end
                 end
                 logSuccess("Folder " .. obj.Name, mobCount .. " mobs")
+                if #mobExamples > 0 then
+                    print("    Contoh: " .. table.concat(mobExamples, ", "))
+                end
             end
         end
     end
@@ -216,7 +359,7 @@ local function detectKillAuraInfo()
     for _, obj in ipairs(workspace:GetChildren()) do
         if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
             local mobName = obj.Name
-            if #mobExamples < 5 then
+            if #mobExamples < 10 then
                 table.insert(mobExamples, mobName)
             end
             
@@ -229,34 +372,30 @@ local function detectKillAuraInfo()
                 }
                 
                 -- Deteksi damage method
-                local methods = {}
-                if pcall(function() humanoid.Health = humanoid.Health end) then
-                    table.insert(methods, "HEALTH_DIRECT")
-                end
-                if humanoid.TakeDamage then
-                    table.insert(methods, "TAKE_DAMAGE")
-                end
+                local methods = detectDamageMethod(humanoid)
                 killInfo.damageMethods[obj.Name] = methods
             end
             
-            -- Deteksi tag/attribute
-            for _, attr in ipairs(obj:GetAttributes()) do
-                table.insert(killInfo.mobTags, attr)
-            end
+            -- Deteksi root part
+            local rootName = detectRootPartName(obj)
+            logInfo("Root Part untuk " .. obj.Name, rootName)
         end
     end
     
-    logSuccess("Contoh Mobs", table.concat(mobExamples, ", "))
+    if #mobExamples > 0 then
+        logSuccess("Contoh Mobs Ditemukan", #mobExamples)
+        print("    " .. table.concat(mobExamples, ", "))
+    end
     
     -- Cari remote untuk attack
-    for _, obj in ipairs(replicatedStorage:GetChildren()) do
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            local name = obj.Name:lower()
-            if name:find("attack") or name:find("damage") or name:find("hit") or 
-               name:find("swing") or name:find("slash") or name:find("punch") or
-               name:find("kill") or name:find("serang") or name:find("combat") then
-                table.insert(killInfo.damageRemotes, obj.Name)
-            end
+    local remotes = findRemoteEvents()
+    for _, remote in ipairs(remotes.replicated) do
+        local name = remote.Name:lower()
+        if name:find("attack") or name:find("damage") or name:find("hit") or 
+           name:find("swing") or name:find("slash") or name:find("punch") or
+           name:find("kill") or name:find("serang") or name:find("combat") or
+           name:find("melee") or name:find("weapon") then
+            table.insert(killInfo.damageRemotes, remote.Name)
         end
     end
     
@@ -267,7 +406,7 @@ local function detectKillAuraInfo()
         end
     end
     
-    -- Deteksi cooldown attack (dari animasi atau script)
+    -- Deteksi animasi attack
     local character = player.Character
     if character then
         local humanoid = character:FindFirstChild("Humanoid")
@@ -275,12 +414,23 @@ local function detectKillAuraInfo()
             local animator = humanoid:FindFirstChildOfClass("Animator")
             if animator then
                 for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                    if track.Animation.AnimationId:lower():find("attack") then
-                        logInfo("Attack Animation", track.Name)
-                        logInfo("Animation Length", track.Length)
+                    if track.Animation.AnimationId:lower():find("attack") or
+                       track.Name:lower():find("attack") or
+                       track.Name:lower():find("swing") then
+                        table.insert(killInfo.attackAnimations, {
+                            name = track.Name,
+                            length = track.Length
+                        })
                     end
                 end
             end
+        end
+    end
+    
+    if #killInfo.attackAnimations > 0 then
+        logSuccess("Attack Animations", #killInfo.attackAnimations)
+        for _, anim in ipairs(killInfo.attackAnimations) do
+            print("    " .. anim.name .. " (" .. anim.length .. "s)")
         end
     end
     
@@ -288,150 +438,331 @@ local function detectKillAuraInfo()
 end
 
 -- =============================================
--- 4. DETEKSI FITUR TAMBAHAN
+-- 7. DETEKSI NPC/MOB PATTERNS
 -- =============================================
-local function detectAdditionalFeatures()
-    logSection("ADDITIONAL FEATURES")
-    
-    local features = {
-        autoCollect = false,
-        autoQuest = false,
-        autoUpgrade = false,
-        teleportPoints = {}
+local function detectMobPatterns()
+    local patterns = {
+        npcNames = {},
+        mobNames = {},
+        commonFolders = {},
+        hasHealth = {},
+        hasHumanoid = {}
     }
     
-    -- Cek auto collect (touch interest)
     for _, obj in ipairs(workspace:GetChildren()) do
-        if obj:IsA("Part") or obj:IsA("Model") then
-            if obj.Name:lower():find("coin") or obj.Name:lower():find("gold") or 
-               obj.Name:lower():find("item") or obj.Name:lower():find("drop") then
-                features.autoCollect = true
-                logSuccess("Collectible Items", obj.Name)
+        if obj:IsA("Model") then
+            local humanoid = obj:FindFirstChild("Humanoid")
+            if humanoid then
+                if not players:GetPlayerFromCharacter(obj) then
+                    local name = obj.Name
+                    
+                    if name:lower():find("npc") or name:lower():find("pedagang") or 
+                       name:lower():find("merchant") or name:lower():find("guard") then
+                        table.insert(patterns.npcNames, name)
+                    else
+                        table.insert(patterns.mobNames, name)
+                    end
+                    
+                    table.insert(patterns.hasHumanoid, name)
+                    
+                    if humanoid.Health then
+                        table.insert(patterns.hasHealth, name)
+                    end
+                end
+            end
+        end
+        
+        if obj:IsA("Folder") and (obj.Name:lower():find("mob") or obj.Name:lower():find("npc") or obj.Name:lower():find("enemy")) then
+            table.insert(patterns.commonFolders, obj.Name)
+        end
+    end
+    
+    return patterns
+end
+
+-- =============================================
+-- 8. DETEKSI ANIMATIONS
+-- =============================================
+local function detectAnimations(character)
+    if not character then return {} end
+    
+    local anims = {}
+    
+    local humanoid = character:FindFirstChild("Humanoid")
+    if humanoid then
+        local animator = humanoid:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                table.insert(anims, {
+                    name = track.Name,
+                    animationId = track.Animation.AnimationId
+                })
             end
         end
     end
     
-    -- Cek teleport points (portal, door, dll)
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if obj:IsA("Part") or obj:IsA("Model") then
-            local name = obj.Name:lower()
-            if name:find("portal") or name:find("door") or name:find("gate") or 
-               name:find("pintu") or name:find("teleport") or name:find("warp") then
-                table.insert(features.teleportPoints, obj.Name)
-            end
-        end
-    end
-    
-    if #features.teleportPoints > 0 then
-        logSuccess("Teleport Points", #features.teleportPoints)
-    end
-    
-    return features
+    return anims
 end
 
 -- =============================================
--- 5. GENERATE READY-TO-USE CONFIG
--- =============================================
-local function generateConfig()
-    logSection("READY-TO-USE CONFIGURATION")
-    
-    print("\n-- Copy paste ini ke script Anda:\n")
-    print("local GAME_CONFIG = {")
-    
-    -- Auto Sell Config
-    print("\n    -- AUTO SELL CONFIG")
-    local sellInfo = detectAutoSellInfo()
-    print("    autoSell = {")
-    print("        enabled = false,")
-    print("        merchants = {")
-    for i, merchant in ipairs(sellInfo.merchants) do
-        print("            \"" .. merchant.name .. "\",")
-    end
-    print("        },")
-    print("        sellRemotes = {")
-    for _, remote in ipairs(sellInfo.sellRemotes) do
-        print("            \"" .. remote .. "\",")
-    end
-    print("        },")
-    print("        currencyType = \"" .. sellInfo.currencyType .. "\",")
-    print("        sellThreshold = 100, -- Jual saat item > 100")
-    print("    },")
-    
-    -- Anti AFK Config
-    print("\n    -- ANTI AFK CONFIG")
-    print("    antiAFK = {")
-    print("        enabled = false,")
-    print("        moveMouse = true,    -- Gerakkan mouse")
-    print("        jumpEvery = 300,     -- Lompat setiap 5 menit")
-    print("        walkEvery = 600,      -- Jalan setiap 10 menit")
-    print("        chatMessage = \"\",    -- Pesan chat (opsional)")
-    print("    },")
-    
-    -- Kill Aura Config
-    print("\n    -- KILL AURA CONFIG")
-    local killInfo = detectKillAuraInfo()
-    print("    killAura = {")
-    print("        enabled = false,")
-    print("        radius = 15,")
-    print("        damage = 30,")
-    print("        speed = 0.2,")
-    print("        mobFolders = {")
-    for _, folder in ipairs(killInfo.mobFolders) do
-        print("            \"" .. folder .. "\",")
-    end
-    print("        },")
-    print("        damageRemotes = {")
-    for _, remote in ipairs(killInfo.damageRemotes) do
-        print("            \"" .. remote .. "\",")
-    end
-    print("        },")
-    print("        damageMethods = {")
-    for mob, methods in pairs(killInfo.damageMethods) do
-        print("            [\"" .. mob .. "\"] = \"" .. table.concat(methods, "|") .. "\",")
-        break  -- Hanya contoh pertama
-    end
-    print("        },")
-    print("    },")
-    
-    -- Additional Features
-    local addFeatures = detectAdditionalFeatures()
-    print("\n    -- ADDITIONAL FEATURES")
-    print("    additional = {")
-    print("        autoCollect = " .. tostring(addFeatures.autoCollect) .. ",")
-    print("        teleportPoints = {")
-    for _, point in ipairs(addFeatures.teleportPoints) do
-        print("            \"" .. point .. "\",")
-    end
-    print("        },")
-    print("    }")
-    
-    print("}")
-end
-
--- =============================================
--- MAIN LOGGER FUNCTION
+-- 9. MAIN LOGGER FUNCTION
 -- =============================================
 local function runGameStructureLogger()
     logSection("GAME STRUCTURE LOGGER - VERSI LENGKAP")
     logInfo("Game ID", game.PlaceId)
     logInfo("Game Name", game.Name)
+    logInfo("Creator", game.CreatorId)
     logInfo("Timestamp", os.date("%Y-%m-%d %H:%M:%S"))
+    
+    -- =========================================
+    -- KARAKTER PLAYER
+    -- =========================================
+    logSection("KARAKTER PLAYER")
+    
+    local character = player.Character
+    if character then
+        logSuccess("Nama Karakter", character.Name)
+        
+        local rootName = detectRootPartName(character)
+        logSuccess("Root Part Name", rootName)
+        
+        logInfo("Semua Part dalam Karakter:")
+        for _, child in ipairs(character:GetChildren()) do
+            if child:IsA("BasePart") then
+                print("      - " .. child.Name .. " (" .. child.ClassName .. ")")
+            end
+        end
+        
+        local humanoid = character:FindFirstChild("Humanoid")
+        if humanoid then
+            logSuccess("Humanoid", "Ditemukan")
+            logInfo("  Max Health", humanoid.MaxHealth)
+            logInfo("  Current Health", humanoid.Health)
+            logInfo("  Walk Speed", humanoid.WalkSpeed)
+            logInfo("  Jump Power", humanoid.JumpPower)
+            
+            local methods = detectDamageMethod(humanoid)
+            logInfo("  Damage Methods", table.concat(methods, ", "))
+            
+            local anims = detectAnimations(character)
+            logInfo("  Active Animations", #anims)
+        else
+            logError("Humanoid", "Tidak ditemukan")
+        end
+    else
+        logError("Karakter", "Belum spawn")
+    end
     
     -- Jalankan semua deteksi
     detectAutoSellInfo()
     detectAntiAFKInfo()
     detectKillAuraInfo()
-    detectAdditionalFeatures()
     
-    -- Generate config
-    generateConfig()
+    -- =========================================
+    -- MOB/NPC TERDEKAT
+    -- =========================================
+    logSection("MOB/NPC TERDEKAT")
+    
+    local mobsFound = 0
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and not players:GetPlayerFromCharacter(obj) then
+            mobsFound = mobsFound + 1
+            if mobsFound <= 5 then
+                print("\n  📍 Mob #" .. mobsFound .. ": " .. obj.Name)
+                
+                local rootName = detectRootPartName(obj)
+                print("      Root Part: " .. rootName)
+                
+                local humanoid = obj:FindFirstChild("Humanoid")
+                if humanoid then
+                    print("      Health: " .. humanoid.Health .. "/" .. humanoid.MaxHealth)
+                    
+                    local methods = detectDamageMethod(humanoid)
+                    print("      Damage Methods: " .. table.concat(methods, ", "))
+                end
+            end
+        end
+    end
+    logInfo("Total Mob di Workspace", mobsFound)
+    
+    -- =========================================
+    -- REMOTE EVENTS
+    -- =========================================
+    logSection("REMOTE EVENTS")
+    
+    local remotes = findRemoteEvents()
+    
+    if #remotes.replicated > 0 then
+        logSuccess("ReplicatedStorage", #remotes.replicated .. " remote(s)")
+        for _, remote in ipairs(remotes.replicated) do
+            local name = remote.Name:lower()
+            local icon = "📡"
+            if name:find("attack") or name:find("damage") or name:find("hit") then
+                icon = "⚔️"
+            elseif name:find("sell") or name:find("buy") or name:find("trade") then
+                icon = "💰"
+            elseif name:find("move") or name:find("walk") then
+                icon = "🚶"
+            elseif name:find("chat") or name:find("say") then
+                icon = "💬"
+            end
+            print("    " .. icon .. " " .. remote.Name .. " (" .. remote.ClassName .. ")")
+        end
+    else
+        logWarning("ReplicatedStorage", "Tidak ada remote")
+    end
+    
+    -- =========================================
+    -- FOLDER STRUCTURE
+    -- =========================================
+    logSection("FOLDER STRUCTURE")
+    
+    local importantFolders = {}
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Folder") then
+            local name = obj.Name:lower()
+            if name:find("mob") or name:find("npc") or name:find("enemy") or 
+               name:find("spawn") or name:find("zone") or name:find("dungeon") or
+               name:find("shop") or name:find("merchant") then
+                table.insert(importantFolders, obj.Name)
+            end
+        end
+    end
+    
+    if #importantFolders > 0 then
+        logSuccess("Important Folders Found", #importantFolders)
+        for _, folder in ipairs(importantFolders) do
+            print("    📁 " .. folder)
+        end
+    else
+        logWarning("Important Folders", "Tidak ditemukan")
+    end
+    
+    -- =========================================
+    -- AUTO-DETECTED CONFIGURATION
+    -- =========================================
+    logSection("AUTO-DETECTED CONFIG")
+    
+    local autoConfig = {}
+    
+    if character then
+        autoConfig.rootPartName = detectRootPartName(character)
+        logSuccess("rootPartName", '"' .. autoConfig.rootPartName .. '"')
+    else
+        autoConfig.rootPartName = "HumanoidRootPart"
+        logWarning("rootPartName", '"HumanoidRootPart" (default)')
+    end
+    
+    autoConfig.humanoidName = "Humanoid"
+    logSuccess("humanoidName", '"Humanoid"')
+    
+    if character and character:FindFirstChild("Humanoid") then
+        local methods = detectDamageMethod(character.Humanoid)
+        if #methods > 0 then
+            autoConfig.damageMethod = methods[1]
+            logSuccess("damageMethod", autoConfig.damageMethod)
+        else
+            autoConfig.damageMethod = "health"
+            logWarning("damageMethod", '"health" (default)')
+        end
+    else
+        autoConfig.damageMethod = "health"
+        logWarning("damageMethod", '"health" (default)')
+    end
+    
+    -- Attack remotes
+    autoConfig.attackRemotes = {}
+    for _, remote in ipairs(remotes.replicated) do
+        local name = remote.Name:lower()
+        if name:find("attack") or name:find("damage") or name:find("hit") or 
+           name:find("swing") or name:find("slash") or name:find("punch") then
+            table.insert(autoConfig.attackRemotes, remote.Name)
+        end
+    end
+    
+    -- Sell remotes
+    autoConfig.sellRemotes = {}
+    for _, remote in ipairs(remotes.replicated) do
+        local name = remote.Name:lower()
+        if name:find("sell") or name:find("buy") or name:find("trade") or name:find("shop") then
+            table.insert(autoConfig.sellRemotes, remote.Name)
+        end
+    end
+    
+    local patterns = detectMobPatterns()
+    autoConfig.npcNames = patterns.npcNames
+    autoConfig.mobNames = patterns.mobNames
+    
+    -- =========================================
+    -- READY-TO-USE CONFIG
+    -- =========================================
+    logSection("READY-TO-USE CONFIGURATION")
+    print("\n-- Copy paste ini ke script Anda:\n")
+    print("local GAME_CONFIG = {")
+    print("    -- BASE CONFIG")
+    print("    rootPartName = \"" .. autoConfig.rootPartName .. "\",")
+    print("    humanoidName = \"Humanoid\",")
+    print("    damageMethod = \"" .. (autoConfig.damageMethod or "health") .. "\",")
+    print("")
+    print("    -- KILL AURA CONFIG")
+    print("    killAura = {")
+    print("        enabled = false,")
+    print("        radius = 15,")
+    print("        damage = 30,")
+    print("        speed = 0.2,")
+    print("        damageRemotes = {")
+    for _, name in ipairs(autoConfig.attackRemotes) do
+        print("            \"" .. name .. "\",")
+    end
+    print("        },")
+    print("    },")
+    print("")
+    print("    -- AUTO SELL CONFIG")
+    print("    autoSell = {")
+    print("        enabled = false,")
+    print("        merchants = {")
+    local sellInfo = detectAutoSellInfo()
+    for _, merchant in ipairs(sellInfo.merchants) do
+        print("            \"" .. merchant.name .. "\",")
+    end
+    print("        },")
+    print("        sellRemotes = {")
+    for _, name in ipairs(autoConfig.sellRemotes) do
+        print("            \"" .. name .. "\",")
+    end
+    print("        },")
+    print("        currencyType = \"" .. sellInfo.currencyType .. "\",")
+    print("        sellThreshold = 100,")
+    print("    },")
+    print("")
+    print("    -- ANTI AFK CONFIG")
+    print("    antiAFK = {")
+    print("        enabled = false,")
+    print("        moveMouse = true,")
+    print("        jumpEvery = 300,")
+    print("        walkEvery = 600,")
+    print("        chatMessage = \"\",")
+    print("    },")
+    print("")
+    print("    -- FILTER CONFIG")
+    print("    npcNames = {")
+    for i = 1, math.min(10, #autoConfig.npcNames) do
+        print("        \"" .. autoConfig.npcNames[i] .. "\",")
+    end
+    print("    },")
+    print("    mobNames = {")
+    for i = 1, math.min(10, #autoConfig.mobNames) do
+        print("        \"" .. autoConfig.mobNames[i] .. "\",")
+    end
+    print("    }")
+    print("}")
     
     logSection("LOGGING COMPLETE")
     print("\n✅ Tekan L untuk menjalankan ulang logger")
     print("✅ Copy config di atas ke script template Anda")
 end
 
--- Run logger
+-- Jalankan logger
 runGameStructureLogger()
 
 -- Hotkey untuk re-run
@@ -442,3 +773,77 @@ userInputService.InputBegan:Connect(function(input)
         runGameStructureLogger()
     end
 end)
+
+print("\n✅ GAME STRUCTURE LOGGER READY")
+print("   Tekan L untuk menjalankan ulang")
+```
+
+## 📋 **INFO YANG DIDAPAT:**
+
+### **Auto Sell:**
+- Daftar NPC merchant
+- Remote events untuk jual beli
+- Sistem currency
+- Item di inventory
+
+### **Anti AFK:**
+- Deteksi timer AFK
+- Rekomendasi gerakan
+- Informasi humanoid
+
+### **Kill Aura:**
+- Folder tempat mob
+- Contoh nama mob
+- Damage remotes
+- Damage methods
+- Health mob
+- Attack animations
+
+## 🎯 **OUTPUT CONFIG:**
+
+```lua
+local GAME_CONFIG = {
+    -- BASE CONFIG
+    rootPartName = "HumanoidRootPart",
+    humanoidName = "Humanoid",
+    damageMethod = "HEALTH_DIRECT",
+
+    -- KILL AURA CONFIG
+    killAura = {
+        enabled = false,
+        radius = 15,
+        damage = 30,
+        speed = 0.2,
+        damageRemotes = {
+            "AttackRemote",
+            "DamageRemote",
+        },
+    },
+
+    -- AUTO SELL CONFIG
+    autoSell = {
+        enabled = false,
+        merchants = {
+            "Merchant",
+            "Blacksmith",
+        },
+        sellRemotes = {
+            "SellItem",
+            "TradeRemote",
+        },
+        currencyType = "Gold",
+        sellThreshold = 100,
+    },
+
+    -- ANTI AFK CONFIG
+    antiAFK = {
+        enabled = false,
+        moveMouse = true,
+        jumpEvery = 300,
+        walkEvery = 600,
+        chatMessage = "",
+    },
+}
+```
+
+Sekarang logger Anda sudah **sangat lengkap** dengan semua informasi yang diperlukan! 🚀
