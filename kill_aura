@@ -1,70 +1,677 @@
--- KILL AURA SEDERHANA untuk game UGC Anda
--- Berdasarkan data: HEALTH_DIRECT (bisa langsung kurangi health)
+-- =============================================
+-- KILL AURA - SIAP PAKAI DENGAN CUSTOM FILTER
+-- Fitur: Bisa input nama mob sendiri di GUI
+-- =============================================
 
 local player = game.Players.LocalPlayer
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
+local userInputService = game:GetService("UserInputService")
+local runService = game:GetService("RunService")
+local players = game:GetService("Players")
+local tweenService = game:GetService("TweenService")
 
--- Konfigurasi
+-- =============================================
+-- VARIABEL KILL AURA
+-- =============================================
 local killAuraActive = false
-local radius = 20  -- Radius serangan
-local damage = 50  -- Damage per tick
-local cooldown = 0.2  -- Kecepatan serangan
-local lastAttack = 0
+local killRadius = 20
+local damageAmount = 50
+local attackSpeed = 0.2
+local lastAttackTime = 0
 
--- Fungsi deteksi mob (sama seperti di logger)
+-- FILTER NAMA MOB (bisa diisi dari GUI)
+local targetMobFilters = {}  -- Kosong = semua mob
+local npcKeywords = {"npc", "merchant", "shop", "guard", "banker", "trader", 
+                     "blacksmith", "vendor", "quest", "trainer"}
+
+local character = nil
+local humanoidRootPart = nil
+
+-- =============================================
+-- FUNGSI UPDATE KARAKTER
+-- =============================================
+local function updateCharacter()
+    character = player.Character
+    if character then
+        humanoidRootPart = character:FindFirstChild("HumanoidRootPart") or 
+                          character:FindFirstChild("Torso") or
+                          character:FindFirstChildOfClass("BasePart")
+        return true
+    end
+    return false
+end
+
+-- =============================================
+-- FUNGSI CEK APAKAH NAMA MOB SESUAI FILTER
+-- =============================================
+local function isMobNameMatch(mobName)
+    -- Jika filter kosong, terima semua mob
+    if #targetMobFilters == 0 then return true end
+    
+    local lowerName = string.lower(mobName)
+    for _, filter in ipairs(targetMobFilters) do
+        if string.find(lowerName, string.lower(filter)) then
+            return true
+        end
+    end
+    return false
+end
+
+-- =============================================
+-- FUNGSI CEK APAKAH INI NPC (JANGAN DISERANG)
+-- =============================================
+local function isNPC(obj)
+    local name = obj.Name:lower()
+    
+    -- Cek kata kunci NPC
+    for _, keyword in ipairs(npcKeywords) do
+        if name:find(keyword) then
+            return true
+        end
+    end
+    
+    return false
+end
+
+-- =============================================
+-- FUNGSI CEK APAKAH INI MOB (LAYAK DISERANG)
+-- =============================================
 local function isMob(obj)
     if not obj:IsA("Model") then return false end
     if not obj:FindFirstChild("Humanoid") then return false end
-    if Players:GetPlayerFromCharacter(obj) then return false end
-    
-    -- Cek apakah ini NPC (jangan diserang)
-    local name = obj.Name:lower()
-    local npcIndicators = {"npc", "merchant", "shop", "guard", "blacksmith"}
-    for _, keyword in ipairs(npcIndicators) do
-        if name:find(keyword) then return false end
-    end
-    
+    if players:GetPlayerFromCharacter(obj) then return false end
+    if isNPC(obj) then return false end
+    if not isMobNameMatch(obj.Name) then return false end
     return true
 end
 
--- Fungsi utama Kill Aura
-local function killAura()
-    if not killAuraActive then return end
+-- =============================================
+-- FUNGSI MENDAPATKAN SEMUA MOB DALAM RADIUS
+-- =============================================
+local function getMobsInRange()
+    if not humanoidRootPart then return {} end
     
-    local currentTime = tick()
-    if currentTime - lastAttack < cooldown then return end
+    local mobs = {}
+    local playerPos = humanoidRootPart.Position
     
-    -- Cari mob di sekitar
+    -- Scan semua objek di workspace
     for _, obj in ipairs(workspace:GetChildren()) do
-        if isMob(obj) then
-            local humanoid = obj:FindFirstChild("Humanoid")
-            local rootPart = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
+        if obj:IsA("Model") and isMob(obj) then
+            local rootPart = obj:FindFirstChild("HumanoidRootPart") or 
+                             obj:FindFirstChild("Torso") or
+                             obj:FindFirstChildOfClass("BasePart")
             
-            if humanoid and rootPart and humanoid.Health > 0 then
-                -- Cek jarak
-                local distance = (player.Character.HumanoidRootPart.Position - rootPart.Position).Magnitude
-                if distance <= radius then
-                    -- LANGSUNG KURANGI HEALTH (HEALTH_DIRECT)
-                    humanoid.Health = humanoid.Health - damage
-                    print("⚔️ Attack:", obj.Name, "HP:", math.floor(humanoid.Health))
+            if rootPart then
+                local distance = (playerPos - rootPart.Position).Magnitude
+                if distance <= killRadius then
+                    table.insert(mobs, {
+                        model = obj,
+                        rootPart = rootPart,
+                        humanoid = obj:FindFirstChild("Humanoid")
+                    })
+                end
+            end
+        end
+        
+        -- Scan folder
+        if obj:IsA("Folder") then
+            for _, subObj in ipairs(obj:GetChildren()) do
+                if subObj:IsA("Model") and isMob(subObj) then
+                    local rootPart = subObj:FindFirstChild("HumanoidRootPart") or 
+                                     subObj:FindFirstChild("Torso") or
+                                     subObj:FindFirstChildOfClass("BasePart")
+                    
+                    if rootPart then
+                        local distance = (playerPos - rootPart.Position).Magnitude
+                        if distance <= killRadius then
+                            table.insert(mobs, {
+                                model = subObj,
+                                rootPart = rootPart,
+                                humanoid = subObj:FindFirstChild("Humanoid")
+                            })
+                        end
+                    end
                 end
             end
         end
     end
     
-    lastAttack = currentTime
+    return mobs
 end
 
--- Loop utama
-RunService.Heartbeat:Connect(killAura)
-
--- Control (tekan G untuk toggle)
-game:GetService("UserInputService").InputBegan:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.G then
-        killAuraActive = not killAuraActive
-        print("🔴 Kill Aura:", killAuraActive and "ON" or "OFF")
+-- =============================================
+-- FUNGSI KILL AURA UTAMA
+-- =============================================
+local function killAura()
+    if not killAuraActive then return end
+    
+    local currentTime = tick()
+    if currentTime - lastAttackTime < attackSpeed then return end
+    
+    local mobs = getMobsInRange()
+    
+    for _, mob in ipairs(mobs) do
+        if mob and mob.humanoid and mob.humanoid.Health > 0 then
+            -- Kurangi health langsung (HEALTH_DIRECT)
+            local newHealth = mob.humanoid.Health - damageAmount
+            if newHealth <= 0 then
+                mob.humanoid.Health = 0
+                print("💀 Mob mati:", mob.model.Name)
+            else
+                mob.humanoid.Health = newHealth
+                print("⚔️ Damage:", mob.model.Name, "| HP:", math.floor(newHealth))
+            end
+            
+            -- Backup: TakeDamage
+            pcall(function()
+                if mob.humanoid.TakeDamage then
+                    mob.humanoid:TakeDamage(damageAmount)
+                end
+            end)
+        end
     end
+    
+    if #mobs > 0 then
+        lastAttackTime = currentTime
+    end
+end
+
+-- =============================================
+-- FUNGSI MEMBUAT GUI DENGAN CUSTOM FILTER
+-- =============================================
+local function createGUI()
+    -- Hapus GUI lama
+    pcall(function()
+        for _, gui in ipairs(player.PlayerGui:GetChildren()) do
+            if gui.Name == "KillAuraGUI" then
+                gui:Destroy()
+            end
+        end
+    end)
+    
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "KillAuraGUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = player.PlayerGui
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 300, 0, 350)
+    frame.Position = UDim2.new(0.5, -150, 0.5, -175)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+    frame.BackgroundTransparency = 0.1
+    frame.BorderSizePixel = 0
+    frame.Active = true
+    frame.Draggable = true
+    frame.Parent = screenGui
+    
+    -- Shadow effect
+    local shadow = Instance.new("Frame")
+    shadow.Size = UDim2.new(1, 10, 1, 10)
+    shadow.Position = UDim2.new(0, -5, 0, -5)
+    shadow.BackgroundColor3 = Color3.new(0, 0, 0)
+    shadow.BackgroundTransparency = 0.5
+    shadow.BorderSizePixel = 0
+    shadow.ZIndex = -1
+    shadow.Parent = frame
+    
+    -- Judul
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 40)
+    title.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    title.Text = "⚔️ KILL AURA - CUSTOM FILTER"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 16
+    title.Parent = frame
+    
+    -- Tombol Close
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeBtn.Position = UDim2.new(1, -35, 0, 5)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    closeBtn.Text = "✕"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.TextSize = 18
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.Parent = frame
+    closeBtn.MouseButton1Click:Connect(function()
+        screenGui:Destroy()
+    end)
+    
+    local yPos = 50
+    
+    -- =========================================
+    -- STATUS KILL AURA
+    -- =========================================
+    local statusFrame = Instance.new("Frame")
+    statusFrame.Size = UDim2.new(1, -20, 0, 40)
+    statusFrame.Position = UDim2.new(0, 10, 0, yPos)
+    statusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    statusFrame.BorderSizePixel = 0
+    statusFrame.Parent = frame
+    yPos = yPos + 45
+    
+    local statusText = Instance.new("TextLabel")
+    statusText.Size = UDim2.new(0.5, -5, 1, 0)
+    statusText.Position = UDim2.new(0, 10, 0, 0)
+    statusText.BackgroundTransparency = 1
+    statusText.Text = "Kill Aura:"
+    statusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    statusText.TextXAlignment = Enum.TextXAlignment.Left
+    statusText.Font = Enum.Font.Gotham
+    statusText.TextSize = 14
+    statusText.Parent = statusFrame
+    
+    local statusValue = Instance.new("TextLabel")
+    statusValue.Size = UDim2.new(0.5, -5, 1, 0)
+    statusValue.Position = UDim2.new(0.5, 5, 0, 0)
+    statusValue.BackgroundTransparency = 1
+    statusValue.Text = "OFF"
+    statusValue.TextColor3 = Color3.fromRGB(255, 100, 100)
+    statusValue.TextXAlignment = Enum.TextXAlignment.Right
+    statusValue.Font = Enum.Font.GothamBold
+    statusValue.TextSize = 14
+    statusValue.Parent = statusFrame
+    
+    -- Tombol Toggle
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(1, -20, 0, 35)
+    toggleBtn.Position = UDim2.new(0, 10, 0, yPos)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+    toggleBtn.Text = "🔴 MATIKAN KILL AURA"
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.TextSize = 14
+    toggleBtn.Parent = frame
+    yPos = yPos + 40
+    
+    -- =========================================
+    -- CUSTOM FILTER NAMA MOB
+    -- =========================================
+    local filterLabel = Instance.new("TextLabel")
+    filterLabel.Size = UDim2.new(1, -20, 0, 25)
+    filterLabel.Position = UDim2.new(0, 10, 0, yPos)
+    filterLabel.BackgroundTransparency = 1
+    filterLabel.Text = "🎯 FILTER NAMA MOB"
+    filterLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+    filterLabel.TextXAlignment = Enum.TextXAlignment.Left
+    filterLabel.Font = Enum.Font.GothamBold
+    filterLabel.TextSize = 14
+    filterLabel.Parent = frame
+    yPos = yPos + 25
+    
+    local filterFrame = Instance.new("Frame")
+    filterFrame.Size = UDim2.new(1, -20, 0, 90)
+    filterFrame.Position = UDim2.new(0, 10, 0, yPos)
+    filterFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    filterFrame.BorderSizePixel = 0
+    filterFrame.Parent = frame
+    yPos = yPos + 95
+    
+    local filterDesc = Instance.new("TextLabel")
+    filterDesc.Size = UDim2.new(1, -20, 0, 20)
+    filterDesc.Position = UDim2.new(0, 10, 0, 5)
+    filterDesc.BackgroundTransparency = 1
+    filterDesc.Text = "Nama mob (pisahkan dengan koma):"
+    filterDesc.TextColor3 = Color3.fromRGB(200, 200, 200)
+    filterDesc.TextXAlignment = Enum.TextXAlignment.Left
+    filterDesc.Font = Enum.Font.Gotham
+    filterDesc.TextSize = 12
+    filterDesc.Parent = filterFrame
+    
+    local filterInput = Instance.new("TextBox")
+    filterInput.Size = UDim2.new(1, -20, 0, 30)
+    filterInput.Position = UDim2.new(0, 10, 0, 30)
+    filterInput.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    filterInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+    filterInput.PlaceholderText = "Contoh: Slime, Goblin, Boss"
+    filterInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+    filterInput.Text = ""
+    filterInput.Font = Enum.Font.Gotham
+    filterInput.TextSize = 14
+    filterInput.ClearTextOnFocus = false
+    filterInput.Parent = filterFrame
+    
+    local applyFilterBtn = Instance.new("TextButton")
+    applyFilterBtn.Size = UDim2.new(0.5, -15, 0, 25)
+    applyFilterBtn.Position = UDim2.new(0, 10, 0, 65)
+    applyFilterBtn.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+    applyFilterBtn.Text = "TERAPKAN FILTER"
+    applyFilterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    applyFilterBtn.Font = Enum.Font.GothamBold
+    applyFilterBtn.TextSize = 12
+    applyFilterBtn.Parent = filterFrame
+    
+    local resetFilterBtn = Instance.new("TextButton")
+    resetFilterBtn.Size = UDim2.new(0.5, -15, 0, 25)
+    resetFilterBtn.Position = UDim2.new(0.5, 5, 0, 65)
+    resetFilterBtn.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+    resetFilterBtn.Text = "RESET (Semua Mob)"
+    resetFilterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    resetFilterBtn.Font = Enum.Font.GothamBold
+    resetFilterBtn.TextSize = 10
+    resetFilterBtn.Parent = filterFrame
+    
+    -- =========================================
+    -- PENGATURAN RADIUS & DAMAGE
+    -- =========================================
+    local settingLabel = Instance.new("TextLabel")
+    settingLabel.Size = UDim2.new(1, -20, 0, 25)
+    settingLabel.Position = UDim2.new(0, 10, 0, yPos)
+    settingLabel.BackgroundTransparency = 1
+    settingLabel.Text = "⚙️ PENGATURAN"
+    settingLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    settingLabel.TextXAlignment = Enum.TextXAlignment.Left
+    settingLabel.Font = Enum.Font.GothamBold
+    settingLabel.TextSize = 14
+    settingLabel.Parent = frame
+    yPos = yPos + 30
+    
+    -- Radius Slider
+    local radiusFrame = Instance.new("Frame")
+    radiusFrame.Size = UDim2.new(1, -20, 0, 40)
+    radiusFrame.Position = UDim2.new(0, 10, 0, yPos)
+    radiusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    radiusFrame.BorderSizePixel = 0
+    radiusFrame.Parent = frame
+    
+    local radiusText = Instance.new("TextLabel")
+    radiusText.Size = UDim2.new(0.5, -5, 1, 0)
+    radiusText.Position = UDim2.new(0, 10, 0, 0)
+    radiusText.BackgroundTransparency = 1
+    radiusText.Text = "Radius:"
+    radiusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    radiusText.TextXAlignment = Enum.TextXAlignment.Left
+    radiusText.Font = Enum.Font.Gotham
+    radiusText.TextSize = 14
+    radiusText.Parent = radiusFrame
+    
+    local radiusValue = Instance.new("TextLabel")
+    radiusValue.Size = UDim2.new(0.3, -5, 1, 0)
+    radiusValue.Position = UDim2.new(0.7, 0, 0, 0)
+    radiusValue.BackgroundTransparency = 1
+    radiusValue.Text = killRadius .. "m"
+    radiusValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+    radiusValue.TextXAlignment = Enum.TextXAlignment.Right
+    radiusValue.Font = Enum.Font.GothamBold
+    radiusValue.TextSize = 14
+    radiusValue.Parent = radiusFrame
+    
+    local radiusSlider = Instance.new("TextButton")
+    radiusSlider.Size = UDim2.new(0.6, -10, 0, 10)
+    radiusSlider.Position = UDim2.new(0.4, 5, 0, 25)
+    radiusSlider.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    radiusSlider.Text = ""
+    radiusSlider.BorderSizePixel = 0
+    radiusSlider.Parent = radiusFrame
+    
+    local radiusFill = Instance.new("Frame")
+    radiusFill.Size = UDim2.new((killRadius - 5) / 45, 0, 1, 0)  -- Range 5-50
+    radiusFill.BackgroundColor3 = Color3.fromRGB(100, 200, 255)
+    radiusFill.BorderSizePixel = 0
+    radiusFill.Parent = radiusSlider
+    yPos = yPos + 45
+    
+    -- Damage Slider
+    local damageFrame = Instance.new("Frame")
+    damageFrame.Size = UDim2.new(1, -20, 0, 40)
+    damageFrame.Position = UDim2.new(0, 10, 0, yPos)
+    damageFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    damageFrame.BorderSizePixel = 0
+    damageFrame.Parent = frame
+    
+    local damageText = Instance.new("TextLabel")
+    damageText.Size = UDim2.new(0.5, -5, 1, 0)
+    damageText.Position = UDim2.new(0, 10, 0, 0)
+    damageText.BackgroundTransparency = 1
+    damageText.Text = "Damage:"
+    damageText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    damageText.TextXAlignment = Enum.TextXAlignment.Left
+    damageText.Font = Enum.Font.Gotham
+    damageText.TextSize = 14
+    damageText.Parent = damageFrame
+    
+    local damageValue = Instance.new("TextLabel")
+    damageValue.Size = UDim2.new(0.3, -5, 1, 0)
+    damageValue.Position = UDim2.new(0.7, 0, 0, 0)
+    damageValue.BackgroundTransparency = 1
+    damageValue.Text = damageAmount
+    damageValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+    damageValue.TextXAlignment = Enum.TextXAlignment.Right
+    damageValue.Font = Enum.Font.GothamBold
+    damageValue.TextSize = 14
+    damageValue.Parent = damageFrame
+    
+    local damageSlider = Instance.new("TextButton")
+    damageSlider.Size = UDim2.new(0.6, -10, 0, 10)
+    damageSlider.Position = UDim2.new(0.4, 5, 0, 25)
+    damageSlider.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    damageSlider.Text = ""
+    damageSlider.BorderSizePixel = 0
+    damageSlider.Parent = damageFrame
+    
+    local damageFill = Instance.new("Frame")
+    damageFill.Size = UDim2.new(damageAmount / 100, 0, 1, 0)  -- Range 0-100
+    damageFill.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+    damageFill.BorderSizePixel = 0
+    damageFill.Parent = damageSlider
+    yPos = yPos + 45
+    
+    -- Speed Slider
+    local speedFrame = Instance.new("Frame")
+    speedFrame.Size = UDim2.new(1, -20, 0, 40)
+    speedFrame.Position = UDim2.new(0, 10, 0, yPos)
+    speedFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    speedFrame.BorderSizePixel = 0
+    speedFrame.Parent = frame
+    
+    local speedText = Instance.new("TextLabel")
+    speedText.Size = UDim2.new(0.5, -5, 1, 0)
+    speedText.Position = UDim2.new(0, 10, 0, 0)
+    speedText.BackgroundTransparency = 1
+    speedText.Text = "Kecepatan:"
+    speedText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    speedText.TextXAlignment = Enum.TextXAlignment.Left
+    speedText.Font = Enum.Font.Gotham
+    speedText.TextSize = 14
+    speedText.Parent = speedFrame
+    
+    local speedValue = Instance.new("TextLabel")
+    speedValue.Size = UDim2.new(0.3, -5, 1, 0)
+    speedValue.Position = UDim2.new(0.7, 0, 0, 0)
+    speedValue.BackgroundTransparency = 1
+    speedValue.Text = string.format("%.1f", attackSpeed) .. "s"
+    speedValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+    speedValue.TextXAlignment = Enum.TextXAlignment.Right
+    speedValue.Font = Enum.Font.GothamBold
+    speedValue.TextSize = 14
+    speedValue.Parent = speedFrame
+    
+    local speedSlider = Instance.new("TextButton")
+    speedSlider.Size = UDim2.new(0.6, -10, 0, 10)
+    speedSlider.Position = UDim2.new(0.4, 5, 0, 25)
+    speedSlider.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    speedSlider.Text = ""
+    speedSlider.BorderSizePixel = 0
+    speedSlider.Parent = speedFrame
+    
+    local speedFill = Instance.new("Frame")
+    speedFill.Size = UDim2.new(1 - (attackSpeed / 1), 0, 1, 0)  -- Range 0-1, terbalik
+    speedFill.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+    speedFill.BorderSizePixel = 0
+    speedFill.Parent = speedSlider
+    
+    -- =========================================
+    -- EVENT HANDLER
+    -- =========================================
+    
+    -- Toggle Kill Aura
+    toggleBtn.MouseButton1Click:Connect(function()
+        killAuraActive = not killAuraActive
+        if killAuraActive then
+            statusValue.Text = "ON"
+            statusValue.TextColor3 = Color3.fromRGB(100, 255, 100)
+            toggleBtn.Text = "🔴 MATIKAN KILL AURA"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+        else
+            statusValue.Text = "OFF"
+            statusValue.TextColor3 = Color3.fromRGB(255, 100, 100)
+            toggleBtn.Text = "🟢 AKTIFKAN KILL AURA"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+        end
+    end)
+    
+    -- Apply Filter
+    applyFilterBtn.MouseButton1Click:Connect(function()
+        local filterText = filterInput.Text
+        targetMobFilters = {}
+        
+        if filterText ~= "" then
+            -- Pisahkan dengan koma
+            for word in string.gmatch(filterText, "([^,]+)") do
+                local trimmed = word:match("^%s*(.-)%s*$")
+                if trimmed and trimmed ~= "" then
+                    table.insert(targetMobFilters, trimmed)
+                end
+            end
+        end
+        
+        if #targetMobFilters == 0 then
+            print("🎯 Filter: Semua mob")
+        else
+            print("🎯 Filter:", table.concat(targetMobFilters, ", "))
+        end
+    end)
+    
+    -- Reset Filter
+    resetFilterBtn.MouseButton1Click:Connect(function()
+        filterInput.Text = ""
+        targetMobFilters = {}
+        print("🎯 Filter direset: Semua mob")
+    end)
+    
+    -- Slider functionality
+    local draggingRadius = false
+    local draggingDamage = false
+    local draggingSpeed = false
+    
+    radiusSlider.MouseButton1Down:Connect(function()
+        draggingRadius = true
+    end)
+    
+    damageSlider.MouseButton1Down:Connect(function()
+        draggingDamage = true
+    end)
+    
+    speedSlider.MouseButton1Down:Connect(function()
+        draggingSpeed = true
+    end)
+    
+    userInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingRadius = false
+            draggingDamage = false
+            draggingSpeed = false
+        end
+    end)
+    
+    userInputService.InputChanged:Connect(function(input)
+        if draggingRadius and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local mousePos = userInputService:GetMouseLocation()
+            local sliderPos = radiusSlider.AbsolutePosition
+            local sliderSize = radiusSlider.AbsoluteSize.X
+            
+            if sliderSize > 0 then
+                local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
+                local percent = relativeX / sliderSize
+                
+                killRadius = math.floor(5 + (percent * 45))
+                killRadius = math.clamp(killRadius, 5, 50)
+                radiusValue.Text = killRadius .. "m"
+                radiusFill.Size = UDim2.new((killRadius - 5) / 45, 0, 1, 0)
+            end
+        end
+        
+        if draggingDamage and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local mousePos = userInputService:GetMouseLocation()
+            local sliderPos = damageSlider.AbsolutePosition
+            local sliderSize = damageSlider.AbsoluteSize.X
+            
+            if sliderSize > 0 then
+                local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
+                local percent = relativeX / sliderSize
+                
+                damageAmount = math.floor(percent * 100)
+                damageAmount = math.clamp(damageAmount, 5, 100)
+                damageValue.Text = damageAmount
+                damageFill.Size = UDim2.new(damageAmount / 100, 0, 1, 0)
+            end
+        end
+        
+        if draggingSpeed and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local mousePos = userInputService:GetMouseLocation()
+            local sliderPos = speedSlider.AbsolutePosition
+            local sliderSize = speedSlider.AbsoluteSize.X
+            
+            if sliderSize > 0 then
+                local relativeX = math.clamp(mousePos.X - sliderPos.X, 0, sliderSize)
+                local percent = relativeX / sliderSize
+                
+                attackSpeed = 1 - percent
+                attackSpeed = math.clamp(attackSpeed, 0.05, 1)
+                speedValue.Text = string.format("%.1f", attackSpeed) .. "s"
+                speedFill.Size = UDim2.new(percent, 0, 1, 0)
+            end
+        end
+    end)
+end
+
+-- =============================================
+-- LOOP UTAMA
+-- =============================================
+updateCharacter()
+
+-- Jalankan Kill Aura di Heartbeat
+runService.Heartbeat:Connect(function()
+    pcall(function()
+        if not character or not humanoidRootPart then
+            if player.Character then
+                updateCharacter()
+            end
+            return
+        end
+        
+        killAura()
+    end)
 end)
 
-print("✅ Kill Aura siap! Tekan G untuk toggle")
+-- Deteksi respawn
+player.CharacterAdded:Connect(function(newCharacter)
+    character = newCharacter
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart") or 
+                      character:WaitForChild("Torso") or
+                      character:FindFirstChildOfClass("BasePart")
+    print("🔄 Karakter respawn!")
+end)
+
+-- Buat GUI
+createGUI()
+
+-- =============================================
+-- INFO AWAL
+-- =============================================
+print("=================================")
+print("⚔️ KILL AURA - SIAP PAKAI")
+print("=================================")
+print("📋 FITUR:")
+print("• Custom filter nama mob (pisahkan koma)")
+print("• Radius bisa diatur (5-50)")
+print("• Damage bisa diatur (5-100)")
+print("• Kecepatan bisa diatur (0.05-1s)")
+print("• Auto-detect NPC (tidak diserang)")
+print("=================================")
+print("🎯 CARA PAKAI:")
+print("1. Isi nama mob di kolom filter")
+print("   Contoh: Slime, Goblin, Boss")
+print("2. Klik TERAPKAN FILTER")
+print("3. Klik AKTIFKAN KILL AURA")
+print("=================================")
