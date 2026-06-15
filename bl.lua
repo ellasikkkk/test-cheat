@@ -22,7 +22,8 @@ local targetSettings = {
     {name = "Pufflare", active = false},
     {name = "Phant", active = false},
     {name = "Orbitfin", active = false},
-    {name = "Pico", active = false}
+    {name = "Pico", active = false},
+    {name = "Snow Queen", active = false}
 }
 
 local function getActiveMobsList()
