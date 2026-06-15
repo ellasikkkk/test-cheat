@@ -73,30 +73,49 @@ TargetButton.MouseButton1Click:Connect(function()
     TargetButton.Text = "Target: " .. selectedMob
 end)
 
--- FUNGSI PENCARIAN YANG SUDAH DIPERBAIKI (ADVANCED SCAN)
+-- FUNGSI PENCARIAN UNIVERSAL (TIDAK MEMERLUKAN HUMANOID)
 local function getNearestSpecificMob()
     local nearestMob = nil
     local shortestDist = math.huge
+    
+    -- Pastikan root part player wujud sebelum mengira jarak
+    if not humanoidRootPart then return nil end
     local playerPos = humanoidRootPart.Position
 
-    -- Menggunakan GetDescendants agar mengecek semua folder di workspace
     for _, object in ipairs(workspace:GetDescendants()) do
-        -- Cek apakah dia Model dan namanya "mengandung" nama target (antisipasi ada label level)
-        if object:IsA("Model") and string.find(object.Name, selectedMob) and not players:GetPlayerFromCharacter(object) then
-            -- Cari humanoid dengan Class (lebih aman)
-            local humanoid = object:FindFirstChildOfClass("Humanoid") 
-            -- Prioritaskan PrimaryPart, lalu RootPart, lalu Torso
-            local rootPart = object.PrimaryPart or object:FindFirstChild("HumanoidRootPart") or object:FindFirstChild("Torso") or object:FindFirstChild("UpperTorso")
+        -- Pastikan nama objek wujud dan bukan watak pemain
+        if typeof(object.Name) == "string" and not players:GetPlayerFromCharacter(object) then
+            
+            -- Tukar semua nama ke huruf kecil untuk mengelakkan ralat huruf besar/kecil
+            local objNameLower = string.lower(object.Name)
+            local targetNameLower = string.lower(selectedMob)
+            
+            -- Jika nama mengandungi target (contoh: "pufflare lv.52" mengandungi "pufflare")
+            if string.find(objNameLower, targetNameLower) then
+                
+                local targetPart = nil
+                
+                -- Bagaimana cara nak teleport ke objek ini?
+                if object:IsA("Model") then
+                    -- Kalau dia Model, cari apa-apa part fizik di dalamnya
+                    targetPart = object.PrimaryPart or object:FindFirstChild("HumanoidRootPart") or object:FindFirstChild("Torso") or object:FindFirstChildWhichIsA("BasePart")
+                elseif object:IsA("BasePart") then
+                    -- Kalau dia sendiri adalah Part (MeshPart/Part), jadikan dia target
+                    targetPart = object
+                end
 
-            if humanoid and rootPart and humanoid.Health > 0 then
-                local dist = (playerPos - rootPart.Position).Magnitude
-                if dist < shortestDist then
-                    shortestDist = dist
-                    nearestMob = rootPart
+                -- Jika terjumpa part untuk di-teleport
+                if targetPart then
+                    local dist = (playerPos - targetPart.Position).Magnitude
+                    if dist < shortestDist then
+                        shortestDist = dist
+                        nearestMob = targetPart
+                    end
                 end
             end
         end
     end
+    
     return nearestMob
 end
 
