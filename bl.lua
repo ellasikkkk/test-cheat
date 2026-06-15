@@ -1,167 +1,55 @@
--- Script Utama RPG Grinder - GUI VERSION (V2 - FIX TELEPORT)
--- Fitur: GUI Draggable, Pilih Target Mob, Toggle ON/OFF, Advanced Scanning
-
-local player = game.Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-local userInputService = game:GetService("UserInputService")
-local players = game:GetService("Players")
-local runService = game:GetService("RunService")
-
 -- ==========================================
--- SETUP GUI
+-- MOB PATH SCANNER & FOLDER DETECTOR
 -- ==========================================
-local ScreenGui = Instance.new("ScreenGui")
-local MainFrame = Instance.new("Frame")
-local TitleLabel = Instance.new("TextLabel")
-local TargetButton = Instance.new("TextButton")
-local ToggleButton = Instance.new("TextButton")
+local workspace = game:GetService("Workspace")
 
-ScreenGui.Parent = runService:IsStudio() and player:WaitForChild("PlayerGui") or game:GetService("CoreGui")
-ScreenGui.Name = "RPG_AutoFarm_GUI"
+-- Daftar kata kunci yang ingin dicari (nama mob atau nama folder umum)
+local keywords = {"Pufflare", "Illusiver", "Phant", "Orbitfin", "Pico", "Mob", "Monster", "Enemy", "NPC"}
+local foundLocations = {}
 
-MainFrame.Parent = ScreenGui
-MainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
-MainFrame.Position = UDim2.new(0.5, -100, 0.5, -75)
-MainFrame.Size = UDim2.new(0, 200, 0, 150)
-MainFrame.BorderSizePixel = 2
-MainFrame.BorderColor3 = Color3.fromRGB(0, 255, 255)
-MainFrame.Active = true
-MainFrame.Draggable = true
+print("🔍 Memulai proses pemindaian struktur game...")
+print("==========================================")
 
-TitleLabel.Parent = MainFrame
-TitleLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-TitleLabel.Size = UDim2.new(1, 0, 0, 30)
-TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.Text = "AUTO FARM GUI V2"
-TitleLabel.TextColor3 = Color3.fromRGB(0, 255, 255)
-TitleLabel.TextSize = 14
-
-TargetButton.Parent = MainFrame
-TargetButton.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-TargetButton.Position = UDim2.new(0.1, 0, 0.35, 0)
-TargetButton.Size = UDim2.new(0.8, 0, 0, 30)
-TargetButton.Font = Enum.Font.Gotham
-TargetButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-TargetButton.TextSize = 14
-
-ToggleButton.Parent = MainFrame
-ToggleButton.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
-ToggleButton.Position = UDim2.new(0.1, 0, 0.65, 0)
-ToggleButton.Size = UDim2.new(0.8, 0, 0, 35)
-ToggleButton.Font = Enum.Font.GothamBold
-ToggleButton.Text = "START FARM: OFF"
-ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-ToggleButton.TextSize = 14
-
--- ==========================================
--- VARIABEL & LOGIKA KONTROL
--- ==========================================
-local autoTeleportActive = false
-local mobList = {"Illusiver", "Pufflare", "Phant", "Orbitfin", "Pico"}
-local currentMobIndex = 1
-local selectedMob = mobList[currentMobIndex]
-
-TargetButton.Text = "Target: " .. selectedMob
-
-TargetButton.MouseButton1Click:Connect(function()
-    currentMobIndex = currentMobIndex + 1
-    if currentMobIndex > #mobList then
-        currentMobIndex = 1
-    end
-    selectedMob = mobList[currentMobIndex]
-    TargetButton.Text = "Target: " .. selectedMob
-end)
-
--- FUNGSI PENCARIAN UNIVERSAL (TIDAK MEMERLUKAN HUMANOID)
-local function getNearestSpecificMob()
-    local nearestMob = nil
-    local shortestDist = math.huge
+-- Memindai seluruh objek di Workspace
+for _, object in ipairs(workspace:GetDescendants()) do
+    local objNameLower = string.lower(object.Name)
     
-    -- Pastikan root part player wujud sebelum mengira jarak
-    if not humanoidRootPart then return nil end
-    local playerPos = humanoidRootPart.Position
-
-    for _, object in ipairs(workspace:GetDescendants()) do
-        -- Pastikan nama objek wujud dan bukan watak pemain
-        if typeof(object.Name) == "string" and not players:GetPlayerFromCharacter(object) then
-            
-            -- Tukar semua nama ke huruf kecil untuk mengelakkan ralat huruf besar/kecil
-            local objNameLower = string.lower(object.Name)
-            local targetNameLower = string.lower(selectedMob)
-            
-            -- Jika nama mengandungi target (contoh: "pufflare lv.52" mengandungi "pufflare")
-            if string.find(objNameLower, targetNameLower) then
+    for _, keyword in ipairs(keywords) do
+        local keywordLower = string.lower(keyword)
+        
+        -- Jika menemukan objek yang cocok dengan kata kunci
+        if string.find(objNameLower, keywordLower) then
+            -- Dapatkan lokasi foldernya (Parent)
+            if object.Parent then
+                local parentPath = object.Parent:GetFullName()
                 
-                local targetPart = nil
-                
-                -- Bagaimana cara nak teleport ke objek ini?
-                if object:IsA("Model") then
-                    -- Kalau dia Model, cari apa-apa part fizik di dalamnya
-                    targetPart = object.PrimaryPart or object:FindFirstChild("HumanoidRootPart") or object:FindFirstChild("Torso") or object:FindFirstChildWhichIsA("BasePart")
-                elseif object:IsA("BasePart") then
-                    -- Kalau dia sendiri adalah Part (MeshPart/Part), jadikan dia target
-                    targetPart = object
-                end
-
-                -- Jika terjumpa part untuk di-teleport
-                if targetPart then
-                    local dist = (playerPos - targetPart.Position).Magnitude
-                    if dist < shortestDist then
-                        shortestDist = dist
-                        nearestMob = targetPart
-                    end
-                end
-            end
-        end
-    end
-    
-    return nearestMob
-end
-
--- ==========================================
--- LOOP AUTO TELEPORT
--- ==========================================
-local function startAutoTeleport()
-    spawn(function()
-        while autoTeleportActive do
-            character = player.Character or player.CharacterAdded:Wait()
-            humanoidRootPart = character:WaitForChild("HumanoidRootPart", 5)
-
-            if humanoidRootPart then
-                local targetPart = getNearestSpecificMob()
-                
-                if targetPart then
-                    -- Matikan momentum jatuh agar tidak glitch saat teleport
-                    humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
-                    
-                    -- Teleport ke titik mob (ditambah offset Y=5 agar di atas kepalanya sedikit)
-                    humanoidRootPart.CFrame = targetPart.CFrame * CFrame.new(0, 5, 0)
+                -- Hitung jumlah mob/objek di dalam folder tersebut
+                if not foundLocations[parentPath] then
+                    foundLocations[parentPath] = 1
                 else
-                    -- Jika mob tidak ditemukan di map, kasih peringatan di console
-                    warn("Menunggu mob " .. selectedMob .. " respawn...")
+                    foundLocations[parentPath] = foundLocations[parentPath] + 1
                 end
             end
-            
-            wait(0.2) -- Jeda teleport
+            break -- Lanjut ke objek berikutnya agar tidak double-count
         end
-    end)
+    end
 end
 
--- ==========================================
--- TOGGLE KONTROL
--- ==========================================
-ToggleButton.MouseButton1Click:Connect(function()
-    autoTeleportActive = not autoTeleportActive
-    
-    if autoTeleportActive then
-        ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 180, 40)
-        ToggleButton.Text = "START FARM: ON"
-        startAutoTeleport()
-    else
-        ToggleButton.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
-        ToggleButton.Text = "START FARM: OFF"
-    end
-end)
+-- Menampilkan hasil ke Konsol (Tekan F9 di game)
+print("✅ PEMINDAIAN SELESAI! Hasil Penemuan Folder:")
+print("------------------------------------------")
 
-print("✅ GUI Auto Farm V2 (Fix Teleport) Loaded!")
+local foundSomething = false
+for path, count in pairs(foundLocations) do
+    -- Filter sedikit agar tidak menampilkan folder utama workspace secara langsung jika memungkinkan
+    if path ~= "Workspace" then
+        print("📁 LOKASI: " .. path .. " | 👾 Ditemukan: " .. count .. " objek terkait")
+        foundSomething = true
+    end
+end
+
+if not foundSomething then
+    print("❌ Tidak menemukan folder spesifik. Mob mungkin diletakkan langsung di Workspace tanpa folder.")
+end
+print("==========================================")
+print("💡 Buka console (Tekan F9) untuk melihat log ini dengan jelas.")
