@@ -1,5 +1,5 @@
--- Script Utama RPG Grinder - GUI VERSION
--- Fitur: GUI Draggable, Pilih Target Mob, Toggle ON/OFF
+-- Script Utama RPG Grinder - GUI VERSION (V2 - FIX TELEPORT)
+-- Fitur: GUI Draggable, Pilih Target Mob, Toggle ON/OFF, Advanced Scanning
 
 local player = game.Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -17,11 +17,9 @@ local TitleLabel = Instance.new("TextLabel")
 local TargetButton = Instance.new("TextButton")
 local ToggleButton = Instance.new("TextButton")
 
--- Tentukan parent (CoreGui untuk executor, PlayerGui untuk Roblox Studio)
 ScreenGui.Parent = runService:IsStudio() and player:WaitForChild("PlayerGui") or game:GetService("CoreGui")
 ScreenGui.Name = "RPG_AutoFarm_GUI"
 
--- Desain MainFrame
 MainFrame.Parent = ScreenGui
 MainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
 MainFrame.Position = UDim2.new(0.5, -100, 0.5, -75)
@@ -29,18 +27,16 @@ MainFrame.Size = UDim2.new(0, 200, 0, 150)
 MainFrame.BorderSizePixel = 2
 MainFrame.BorderColor3 = Color3.fromRGB(0, 255, 255)
 MainFrame.Active = true
-MainFrame.Draggable = true -- Membuat GUI bisa digeser
+MainFrame.Draggable = true
 
--- Desain Title
 TitleLabel.Parent = MainFrame
 TitleLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 TitleLabel.Size = UDim2.new(1, 0, 0, 30)
 TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.Text = "AUTO FARM GUI"
+TitleLabel.Text = "AUTO FARM GUI V2"
 TitleLabel.TextColor3 = Color3.fromRGB(0, 255, 255)
 TitleLabel.TextSize = 14
 
--- Desain Target Button
 TargetButton.Parent = MainFrame
 TargetButton.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
 TargetButton.Position = UDim2.new(0.1, 0, 0.35, 0)
@@ -49,7 +45,6 @@ TargetButton.Font = Enum.Font.Gotham
 TargetButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 TargetButton.TextSize = 14
 
--- Desain Toggle Button
 ToggleButton.Parent = MainFrame
 ToggleButton.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
 ToggleButton.Position = UDim2.new(0.1, 0, 0.65, 0)
@@ -67,10 +62,8 @@ local mobList = {"Illusiver", "Pufflare", "Phant", "Orbitfin", "Pico"}
 local currentMobIndex = 1
 local selectedMob = mobList[currentMobIndex]
 
--- Inisialisasi teks target awal
 TargetButton.Text = "Target: " .. selectedMob
 
--- Fungsi ganti target mob saat tombol ditekan
 TargetButton.MouseButton1Click:Connect(function()
     currentMobIndex = currentMobIndex + 1
     if currentMobIndex > #mobList then
@@ -80,17 +73,20 @@ TargetButton.MouseButton1Click:Connect(function()
     TargetButton.Text = "Target: " .. selectedMob
 end)
 
--- Fungsi cari mob spesifik (hanya mob yang dipilih di GUI)
+-- FUNGSI PENCARIAN YANG SUDAH DIPERBAIKI (ADVANCED SCAN)
 local function getNearestSpecificMob()
     local nearestMob = nil
     local shortestDist = math.huge
     local playerPos = humanoidRootPart.Position
 
-    for _, object in ipairs(workspace:GetChildren()) do
-        -- Hanya cari mob dengan nama yang sedang dipilih di GUI
-        if object:IsA("Model") and object.Name == selectedMob and not players:GetPlayerFromCharacter(object) then
-            local humanoid = object:FindFirstChild("Humanoid")
-            local rootPart = object:FindFirstChild("HumanoidRootPart") or object:FindFirstChild("Torso")
+    -- Menggunakan GetDescendants agar mengecek semua folder di workspace
+    for _, object in ipairs(workspace:GetDescendants()) do
+        -- Cek apakah dia Model dan namanya "mengandung" nama target (antisipasi ada label level)
+        if object:IsA("Model") and string.find(object.Name, selectedMob) and not players:GetPlayerFromCharacter(object) then
+            -- Cari humanoid dengan Class (lebih aman)
+            local humanoid = object:FindFirstChildOfClass("Humanoid") 
+            -- Prioritaskan PrimaryPart, lalu RootPart, lalu Torso
+            local rootPart = object.PrimaryPart or object:FindFirstChild("HumanoidRootPart") or object:FindFirstChild("Torso") or object:FindFirstChild("UpperTorso")
 
             if humanoid and rootPart and humanoid.Health > 0 then
                 local dist = (playerPos - rootPart.Position).Magnitude
@@ -117,31 +113,36 @@ local function startAutoTeleport()
                 local targetPart = getNearestSpecificMob()
                 
                 if targetPart then
-                    -- Teleport sedikit di atas mob
-                    humanoidRootPart.CFrame = targetPart.CFrame * CFrame.new(0, 4, 0)
+                    -- Matikan momentum jatuh agar tidak glitch saat teleport
+                    humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
+                    
+                    -- Teleport ke titik mob (ditambah offset Y=5 agar di atas kepalanya sedikit)
+                    humanoidRootPart.CFrame = targetPart.CFrame * CFrame.new(0, 5, 0)
+                else
+                    -- Jika mob tidak ditemukan di map, kasih peringatan di console
+                    warn("Menunggu mob " .. selectedMob .. " respawn...")
                 end
             end
             
-            -- Jeda agar tidak lag / kick
-            wait(getgenv().TeleportDelay or 0.2) 
+            wait(0.2) -- Jeda teleport
         end
     end)
 end
 
--- Fungsi toggle ON/OFF dari GUI
+-- ==========================================
+-- TOGGLE KONTROL
+-- ==========================================
 ToggleButton.MouseButton1Click:Connect(function()
     autoTeleportActive = not autoTeleportActive
     
     if autoTeleportActive then
         ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 180, 40)
         ToggleButton.Text = "START FARM: ON"
-        print("🚀 AUTO TELEPORT: ON | Target:", selectedMob)
         startAutoTeleport()
     else
         ToggleButton.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
         ToggleButton.Text = "START FARM: OFF"
-        print("💤 AUTO TELEPORT: OFF")
     end
 end)
 
-print("✅ GUI Auto Farm Berhasil Dimuat!")
+print("✅ GUI Auto Farm V2 (Fix Teleport) Loaded!")
