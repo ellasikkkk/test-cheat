@@ -1,100 +1,105 @@
--- Script Utama RPG Grinder - GUI VERSION (V7 - CLEAN & MULTI-SELECT)
--- Fitur: Multi-Select, Sequential Farming, Clean Design
-
+-- Script Utama RPG Grinder - GUI V7 FINAL (Hybrid Performance & Features)
 local player = game.Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 local runService = game:GetService("RunService")
-local tweenService = game:GetService("TweenService")
 local virtualUser = game:GetService("VirtualUser")
+local tweenService = game:GetService("TweenService")
 
 -- ==========================================
--- SETUP GUI (CLEAN & MODERN)
+-- SETUP GUI & VARIABEL
 -- ==========================================
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Parent = game:GetService("CoreGui")
-ScreenGui.Name = "RPG_Grinder_Clean"
-
-local MainFrame = Instance.new("Frame")
-MainFrame.Parent = ScreenGui
-MainFrame.Size = UDim2.new(0, 220, 0, 300)
-MainFrame.Position = UDim2.new(0.1, 0, 0.2, 0)
-MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.Draggable = true
-
--- Rounded Corner untuk tampilan modern
-local Corner = Instance.new("UICorner", MainFrame)
-Corner.CornerRadius = UDim.new(0, 8)
+local ScreenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+local MainFrame = Instance.new("Frame", ScreenGui)
+MainFrame.Size = UDim2.new(0, 200, 0, 300); MainFrame.Position = UDim2.new(0.1, 0, 0.2, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35); MainFrame.Active = true; MainFrame.Draggable = true
 
 local Title = Instance.new("TextLabel", MainFrame)
-Title.Size = UDim2.new(1, 0, 0, 40)
-Title.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-Title.Text = "RPG GRINDER V7"
-Title.Font = Enum.Font.GothamBold
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.TextSize = 14
+Title.Size = UDim2.new(1, 0, 0, 40); Title.Text = "RPG GRINDER V7"; Title.TextColor3 = Color3.new(1,1,1)
 
-local ListContainer = Instance.new("Frame", MainFrame)
-ListContainer.Size = UDim2.new(0.9, 0, 0.6, 0)
-ListContainer.Position = UDim2.new(0.05, 0, 0.15, 0)
-ListContainer.BackgroundTransparency = 1
+local MobListFrame = Instance.new("ScrollingFrame", MainFrame)
+MobListFrame.Size = UDim2.new(0.9, 0, 0.6, 0); MobListFrame.Position = UDim2.new(0.05, 0, 0.15, 0)
+Instance.new("UIListLayout", MobListFrame)
 
-local Layout = Instance.new("UIListLayout", ListContainer)
-Layout.Padding = UDim.new(0, 5)
+local ToggleBtn = Instance.new("TextButton", MainFrame)
+ToggleBtn.Size = UDim2.new(0.9, 0, 0, 40); ToggleBtn.Position = UDim2.new(0.05, 0, 0.8, 0)
+ToggleBtn.Text = "START FARM: OFF"; ToggleBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
 
--- ==========================================
--- LOGIKA TOMBOL MOB
--- ==========================================
+local autoFarmActive = false
 local targetSettings = {
-    {name = "Illusiver", active = false},
-    {name = "Pufflare", active = false},
-    {name = "Phant", active = false},
-    {name = "Orbitfin", active = false},
-    {name = "Pico", active = false}
+    {name = "Illusiver", active = false}, {name = "Pufflare", active = false},
+    {name = "Phant", active = false}, {name = "Orbitfin", active = false}, {name = "Pico", active = false}
 }
 
-for _, mobData in ipairs(targetSettings) do
-    local btn = Instance.new("TextButton", ListContainer)
-    btn.Size = UDim2.new(1, 0, 0, 30)
-    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
-    btn.Text = mobData.name
-    btn.Font = Enum.Font.Gotham
-    btn.TextColor3 = Color3.fromRGB(200, 200, 200)
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
-    
+-- Create Buttons
+for _, mob in ipairs(targetSettings) do
+    local btn = Instance.new("TextButton", MobListFrame)
+    btn.Size = UDim2.new(1, -10, 0, 30); btn.Text = mob.name
     btn.MouseButton1Click:Connect(function()
-        mobData.active = not mobData.active
-        btn.BackgroundColor3 = mobData.active and Color3.fromRGB(0, 150, 255) or Color3.fromRGB(50, 50, 55)
-        btn.TextColor3 = mobData.active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(200, 200, 200)
+        mob.active = not mob.active
+        btn.BackgroundColor3 = mob.active and Color3.fromRGB(0, 150, 255) or Color3.fromRGB(50, 50, 55)
     end)
 end
 
 -- ==========================================
--- TOMBOL START/STOP
+-- LOGIKA SCAN & FARM (PERFORMA TINGGI)
 -- ==========================================
-local ToggleBtn = Instance.new("TextButton", MainFrame)
-ToggleBtn.Size = UDim2.new(0.9, 0, 0, 40)
-ToggleBtn.Position = UDim2.new(0.05, 0, 0.82, 0)
-ToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-ToggleBtn.Text = "START FARM"
-ToggleBtn.Font = Enum.Font.GothamBold
-ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0, 5)
+local function getNearestTarget(targetName)
+    local nearest, shortest = nil, math.huge
+    local live = workspace:FindFirstChild("Live")
+    if not live or not live:FindFirstChild("Mobs") then return nil end
+    
+    for _, obj in ipairs(live.Mobs.Client:GetChildren()) do
+        -- Scan nama target via GUI text (Bypass UUID)
+        local found = false
+        for _, desc in ipairs(obj:GetDescendants()) do
+            if (desc:IsA("TextLabel") or desc:IsA("TextButton")) and string.find(string.lower(desc.Text), string.lower(targetName)) then
+                found = true; break
+            end
+        end
+        
+        if found then
+            local root = obj:FindFirstChild("HumanoidRootPart")
+            if root then
+                local dist = (player.Character.HumanoidRootPart.Position - root.Position).Magnitude
+                if dist < shortest then shortest = dist; nearest = root end
+            end
+        end
+    end
+    return nearest
+end
 
--- [Sertakan fungsi getMobFolder, isCorrectMob, getNearestSpecificMob, tweenToTarget, cleanupFlight dari script V6 sebelumnya di sini]
-
-local autoFarmActive = false
+-- ==========================================
+-- LOOP UTAMA
+-- ==========================================
 ToggleBtn.MouseButton1Click:Connect(function()
     autoFarmActive = not autoFarmActive
-    ToggleBtn.Text = autoFarmActive and "STOP FARM" or "START FARM"
-    ToggleBtn.BackgroundColor3 = autoFarmActive and Color3.fromRGB(200, 50, 50) or Color3.fromRGB(0, 200, 100)
-    if autoFarmActive then 
-        -- Panggil fungsi startAutoFarmLoop kamu di sini
-    else
-        -- Panggil fungsi cleanupFlight kamu di sini
-    end
+    ToggleBtn.Text = autoFarmActive and "START FARM: ON" or "START FARM: OFF"
+    ToggleBtn.BackgroundColor3 = autoFarmActive and Color3.fromRGB(40, 180, 40) or Color3.fromRGB(180, 40, 40)
+    
+    spawn(function()
+        while autoFarmActive do
+            local activeMobs = {}
+            for _, m in ipairs(targetSettings) do if m.active then table.insert(activeMobs, m.name) end end
+            
+            for _, mobName in ipairs(activeMobs) do
+                if not autoFarmActive then break end
+                local target = getNearestTarget(mobName)
+                
+                if target then
+                    -- Pergerakan Smooth (Tween)
+                    local tween = tweenService:Create(player.Character.HumanoidRootPart, 
+                        TweenInfo.new(0.5), {CFrame = target.CFrame * CFrame.new(0, 3, 0)})
+                    tween:Play(); tween.Completed:Wait()
+                    
+                    -- Auto Attack (Fungsi yang kamu inginkan)
+                    local tool = player.Character:FindFirstChildOfClass("Tool") or player.Backpack:FindFirstChildOfClass("Tool")
+                    if tool then player.Character.Humanoid:EquipTool(tool); tool:Activate() end
+                end
+                wait(0.2)
+            end
+            wait(0.1)
+        end
+    end)
 end)
 
-print("✅ GUI Clean V7 Loaded!")
+-- Anti AFK
+player.Idled:Connect(function() virtualUser:ClickButton2(Vector2.new()) end)
