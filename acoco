@@ -3,7 +3,7 @@ print("🔍 MEMULAI RADAR PENCARI MOB...")
 print("===================================")
 
 -- Ganti dengan nama monster yang SEDANG ADA di layar kamu sekarang
-local namaMonsterDiLayar = "Snow Queen" 
+local namaMonsterDiLayar = "Violet Yukibun" 
 
 local ketemu = false
 
