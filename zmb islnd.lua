@@ -1,6 +1,6 @@
 -- ==========================================
--- SCRIPT AUTOFARM (OVERHEAD + AUTO DODGE BOSS)
--- Fitur: Autofarm, Float, Noclip, Direct Auto-Attack, Auto Evasion
+-- SCRIPT AUTOFARM FINAL (V9 - KNIT BYPASS)
+-- Fitur: Autofarm, Float, Noclip, Direct Auto-Attack, Auto Dodge
 -- ==========================================
 
 local Players = game:GetService("Players")
@@ -13,49 +13,30 @@ local character = player.Character or player.CharacterAdded:Wait()
 local rootPart = character:WaitForChild("HumanoidRootPart")
 
 -- ==========================================
--- 🔗 HOOKING ULTIMATE (BYPASS KNIT FRAMEWORK)
+-- 1. HOOKING DINAMIS (TANPA WAITFORCHILD)
 -- ==========================================
-print("Mencoba mengakses Controller Game secara paksa...")
+print("Mencoba mengakses Controller Game secara dinamis...")
 
 local AutoAttackController = nil
 local EntityController = nil
+local Knit = nil
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-
--- METODE 1: Mencoba mencari Core Knit dan meminta modul secara resmi
-local function tryKnitHook()
-    local Knit = nil
-    -- Cari modul bernama "Knit" di ReplicatedStorage
-    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
-        if obj:IsA("ModuleScript") and obj.Name == "Knit" then
-            pcall(function() Knit = require(obj) end)
-            break
-        end
-    end
-    
-    if Knit and type(Knit) == "table" and Knit.GetController then
-        pcall(function() AutoAttackController = Knit.GetController("AutoAttackController") end)
-        pcall(function() EntityController = Knit.GetController("EntityController") end)
+-- Mencari sistem inti Knit terlebih dahulu
+for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+    if obj:IsA("ModuleScript") and obj.Name == "Knit" then
+        pcall(function() Knit = require(obj) end)
+        break
     end
 end
 
--- METODE 2: Mencari di PlayerScripts (Tempat Knit sering memindahkan modul)
-local function tryPlayerScriptsHook()
-    local playerScripts = Players.LocalPlayer:WaitForChild("PlayerScripts")
-    for _, obj in ipairs(playerScripts:GetDescendants()) do
-        if obj:IsA("ModuleScript") then
-            if obj.Name == "AutoAttackController" and not AutoAttackController then
-                pcall(function() AutoAttackController = require(obj) end)
-            elseif obj.Name == "EntityController" and not EntityController then
-                pcall(function() EntityController = require(obj) end)
-            end
-        end
-    end
+-- Jika Knit ketemu, minta controllernya secara resmi
+if Knit and type(Knit) == "table" and Knit.GetController then
+    pcall(function() AutoAttackController = Knit.GetController("AutoAttackController") end)
+    pcall(function() EntityController = Knit.GetController("EntityController") end)
 end
 
--- METODE 3: Mencari ulang di ReplicatedStorage sebagai cadangan
-local function tryFallbackHook()
+-- Jika gagal, kita cari dan bongkar paksa modulnya
+if not AutoAttackController or not EntityController then
     for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
         if obj:IsA("ModuleScript") then
             if obj.Name == "AutoAttackController" and not AutoAttackController then
@@ -67,26 +48,24 @@ local function tryFallbackHook()
     end
 end
 
--- Eksekusi semua metode secara berurutan
-tryKnitHook()
-if not AutoAttackController or not EntityController then tryPlayerScriptsHook() end
-if not AutoAttackController or not EntityController then tryFallbackHook() end
-
--- Validasi Akhir
-if AutoAttackController and EntityController then
-    print("✅ Hooking Berhasil 100%! AutoAttack dan Entity siap.")
+if AutoAttackController then
+    print("✅ Berhasil menguasai: AutoAttackController")
 else
-    warn("❌ Hooking Gagal! Cek F9 untuk melihat apakah nama modul diubah oleh developer.")
-    if not AutoAttackController then warn("-> AutoAttackController tidak ditemukan") end
-    if not EntityController then warn("-> EntityController tidak ditemukan") end
+    warn("❌ Gagal menemukan AutoAttackController")
+end
+
+if EntityController then
+    print("✅ Berhasil menguasai: EntityController")
+else
+    warn("❌ Gagal menemukan EntityController")
 end
 
 -- ==========================================
--- VARIABEL KONTROL TINGKAT LANJUT
+-- 2. VARIABEL KONTROL
 -- ==========================================
 local Config = {
     AutoFarm = false,
-    AutoDodge = false, -- FITUR BARU
+    AutoDodge = false,
     AutoFarmHeight = 45,
     Float = false,
     FloatHeight = 15,
@@ -99,25 +78,31 @@ local noclipConnection = nil
 local farmConnection = nil
 
 -- ==========================================
--- SISTEM RADAR BAHAYA (TENTACLE / RED CIRCLE)
+-- 3. SISTEM RADAR BAHAYA (ANTI-LAG CACHE)
 -- ==========================================
-local activeHazards = {}
+local cachedHazards = {}
 
--- Mendengarkan objek baru yang muncul di game
-workspace.DescendantAdded:Connect(function(obj)
-    if obj:IsA("BasePart") or obj:IsA("Model") then
-        local name = string.lower(obj.Name)
-        -- Jika namanya mengandung tentacle, warning, circle, atau aoe
-        if string.find(name, "tentacle") or string.find(name, "warning") or string.find(name, "circle") or string.find(name, "aoe") then
-            table.insert(activeHazards, obj)
+task.spawn(function()
+    while true do
+        local tempHazards = {}
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                local name = string.lower(obj.Name)
+                if string.find(name, "tentacle") or string.find(name, "warning") or string.find(name, "circle") or string.find(name, "aoe") then
+                    if obj.Transparency < 0.8 then 
+                        table.insert(tempHazards, obj)
+                    end
+                end
+            end
         end
+        cachedHazards = tempHazards
+        task.wait(0.1) -- Refresh data 10x per detik (Sangat Ringan)
     end
 end)
 
 -- ==========================================
--- FUNGSI LOGIKA (BACKEND)
+-- 4. FUNGSI LOGIKA (BACKEND)
 -- ==========================================
-
 local function getBestTarget()
     local bestTarget = nil
     local shortestDist = math.huge
@@ -128,7 +113,8 @@ local function getBestTarget()
     
     local playerPos = root.Position
     
-    if EntityController.EntityViewRoot and typeof(EntityController.EntityViewRoot) == "Instance" then
+    -- Ambil dari EntityController (Paling Cepat)
+    if EntityController and EntityController.EntityViewRoot and typeof(EntityController.EntityViewRoot) == "Instance" then
         for _, obj in ipairs(EntityController.EntityViewRoot:GetChildren()) do
             local targetRoot = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart")
             if targetRoot and not Players:GetPlayerFromCharacter(obj) then
@@ -139,6 +125,7 @@ local function getBestTarget()
         if bestTarget then return bestTarget end
     end
     
+    -- Fallback ke folder Workspace
     local foldernames = {"ActiveSpirits", "Live", "World", "Mobs", "Entities"}
     for _, fname in ipairs(foldernames) do
         local f = workspace:FindFirstChild(fname)
@@ -202,8 +189,10 @@ end
 
 local function toggleAutoFarm(state)
     if state then
-        pcall(function() AutoAttackController:SetManualFireHeld(true) end)
-        pcall(function() AutoAttackController:Toggle(true) end)
+        if AutoAttackController then
+            pcall(function() AutoAttackController:SetManualFireHeld(true) end)
+            pcall(function() AutoAttackController:Toggle(true) end)
+        end
         
         farmConnection = RunService.Heartbeat:Connect(function()
             local char = player.Character
@@ -219,39 +208,27 @@ local function toggleAutoFarm(state)
                 
                 -- LOGIKA AUTO DODGE
                 if Config.AutoDodge then
-                    for i = #activeHazards, 1, -1 do
-                        local hazard = activeHazards[i]
-                        -- Hapus dari memori jika tentakel/lingkaran sudah hilang dari map
-                        if not hazard or not hazard.Parent then
-                            table.remove(activeHazards, i)
-                        else
-                            local part = hazard:IsA("Model") and (hazard.PrimaryPart or hazard:FindFirstChildWhichIsA("BasePart")) or hazard
-                            if part then
-                                -- MENGHITUNG JARAK HORIZONTAL (2D)
-                                local p1 = Vector3.new(root.Position.X, 0, root.Position.Z)
-                                local p2 = Vector3.new(part.Position.X, 0, part.Position.Z)
-                                
-                                if (p1 - p2).Magnitude < 25 then -- Radius bahaya (25 studs)
-                                    isEvading = true
-                                    -- Kalkulasi arah menghindar (bergeser 35 studs menjauh dari tentakel)
-                                    local escapeDir = (p1 - p2).Unit
-                                    if escapeDir.X ~= escapeDir.X then escapeDir = Vector3.new(1,0,0) end -- Anti NaN (Jika posisi sama persis)
-                                    
-                                    evadePos = target.Position + (escapeDir * 35) + Vector3.new(0, Config.AutoFarmHeight, 0)
-                                    break
-                                end
+                    for _, part in ipairs(cachedHazards) do
+                        if part and part.Parent then
+                            local p1 = Vector3.new(root.Position.X, 0, root.Position.Z)
+                            local p2 = Vector3.new(part.Position.X, 0, part.Position.Z)
+                            
+                            if (p1 - p2).Magnitude < 30 then 
+                                isEvading = true
+                                local escapeDir = (p1 - p2).Unit
+                                if escapeDir.X ~= escapeDir.X then escapeDir = Vector3.new(1,0,0) end
+                                evadePos = target.Position + (escapeDir * 40) + Vector3.new(0, Config.AutoFarmHeight, 0)
+                                break 
                             end
                         end
                     end
                 end
 
-                root.Velocity = Vector3.new(0,0,0) -- Tahan Gravitasi
+                root.Velocity = Vector3.new(0,0,0) 
                 
                 if isEvading and evadePos then
-                    -- Mode Menghindar: Geser posisi tapi tetap bidik target
                     root.CFrame = CFrame.lookAt(evadePos, target.Position)
                 else
-                    -- Mode Normal: Tepat di atas target
                     local goalPosition = target.Position + Vector3.new(0, Config.AutoFarmHeight, 0)
                     root.CFrame = CFrame.lookAt(goalPosition, target.Position)
                 end
@@ -259,19 +236,21 @@ local function toggleAutoFarm(state)
         end)
     else
         if farmConnection then farmConnection:Disconnect(); farmConnection = nil end
-        pcall(function() AutoAttackController:SetManualFireHeld(false) end)
-        pcall(function() AutoAttackController:Toggle(false) end)
+        if AutoAttackController then
+            pcall(function() AutoAttackController:SetManualFireHeld(false) end)
+            pcall(function() AutoAttackController:Toggle(false) end)
+        end
     end
 end
 
 -- ==========================================
--- SETUP GUI (MENIRU REFERENSI GAMBAR)
+-- 5. SETUP GUI UTAMA
 -- ==========================================
 local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
 ScreenGui.Name = "Advanced_Grinder_UI"
 
 local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.Size = UDim2.new(0, 280, 0, 340) -- Tinggi ditambah untuk tombol Dodge
+MainFrame.Size = UDim2.new(0, 280, 0, 340)
 MainFrame.Position = UDim2.new(0.5, -140, 0.5, -170)
 MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
 MainFrame.Active = true; MainFrame.Draggable = true
@@ -326,9 +305,6 @@ local function CreateRow(text, hasToggle, isNumberVal, defaultNum)
     return Controller
 end
 
--- ==========================================
--- MENYAMBUNGKAN UI DENGAN LOGIKA
--- ==========================================
 local FarmUI = CreateRow("Autofarm (Overhead + Aim)", true, false)
 FarmUI.Toggle.MouseButton1Click:Connect(function()
     Config.AutoFarm = not Config.AutoFarm
@@ -373,5 +349,3 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         toggleAutoFarm(Config.AutoFarm)
     end
 end)
-
-print("✅ Auto Dodge Boss Berhasil Ditambahkan!")
