@@ -38,20 +38,26 @@ local noclipConnection = nil
 local farmConnection = nil
 
 -- ==========================================
--- SISTEM RADAR BAHAYA (TENTACLE / RED CIRCLE)
+-- SISTEM RADAR BAHAYA (AKTIF SCANNER)
 -- ==========================================
-local activeHazards = {}
-
--- Mendengarkan objek baru yang muncul di game
-workspace.DescendantAdded:Connect(function(obj)
-    if obj:IsA("BasePart") or obj:IsA("Model") then
-        local name = string.lower(obj.Name)
-        -- Jika namanya mengandung tentacle, warning, circle, atau aoe
-        if string.find(name, "tentacle") or string.find(name, "warning") or string.find(name, "circle") or string.find(name, "aoe") then
-            table.insert(activeHazards, obj)
+local function getActiveHazards()
+    local hazards = {}
+    -- Kita scan area di sekitar boss atau area tempur
+    -- Mengincar Part yang menjadi indikator lingkaran merah (biasanya Decal atau Part khusus)
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local name = string.lower(obj.Name)
+            -- Memperluas deteksi: mencari nama yang mengandung tentacle, warning, atau aoe
+            if string.find(name, "tentacle") or string.find(name, "warning") or string.find(name, "circle") or string.find(name, "aoe") then
+                -- Hanya ambil yang terlihat (visible) atau aktif
+                if obj.Transparency < 0.8 then 
+                    table.insert(hazards, obj)
+                end
+            end
         end
     end
-end)
+    return hazards
+end
 
 -- ==========================================
 -- FUNGSI LOGIKA (BACKEND)
@@ -156,41 +162,32 @@ local function toggleAutoFarm(state)
                 local isEvading = false
                 local evadePos = nil
                 
-                -- LOGIKA AUTO DODGE
+                -- LOGIKA AUTO DODGE (SCANNER AKTIF)
                 if Config.AutoDodge then
-                    for i = #activeHazards, 1, -1 do
-                        local hazard = activeHazards[i]
-                        -- Hapus dari memori jika tentakel/lingkaran sudah hilang dari map
-                        if not hazard or not hazard.Parent then
-                            table.remove(activeHazards, i)
-                        else
-                            local part = hazard:IsA("Model") and (hazard.PrimaryPart or hazard:FindFirstChildWhichIsA("BasePart")) or hazard
-                            if part then
-                                -- MENGHITUNG JARAK HORIZONTAL (2D)
-                                local p1 = Vector3.new(root.Position.X, 0, root.Position.Z)
-                                local p2 = Vector3.new(part.Position.X, 0, part.Position.Z)
-                                
-                                if (p1 - p2).Magnitude < 25 then -- Radius bahaya (25 studs)
-                                    isEvading = true
-                                    -- Kalkulasi arah menghindar (bergeser 35 studs menjauh dari tentakel)
-                                    local escapeDir = (p1 - p2).Unit
-                                    if escapeDir.X ~= escapeDir.X then escapeDir = Vector3.new(1,0,0) end -- Anti NaN (Jika posisi sama persis)
-                                    
-                                    evadePos = target.Position + (escapeDir * 35) + Vector3.new(0, Config.AutoFarmHeight, 0)
-                                    break
-                                end
-                            end
+                    local currentHazards = getActiveHazards() -- Scan setiap frame
+                    for _, part in ipairs(currentHazards) do
+                        local p1 = Vector3.new(root.Position.X, 0, root.Position.Z)
+                        local p2 = Vector3.new(part.Position.X, 0, part.Position.Z)
+                        
+                        -- Radius bahaya diperbesar sedikit agar lebih responsif
+                        if (p1 - p2).Magnitude < 30 then 
+                            isEvading = true
+                            -- Arah menghindar menjauhi pusat bahaya
+                            local escapeDir = (p1 - p2).Unit
+                            if escapeDir.X ~= escapeDir.X then escapeDir = Vector3.new(1,0,0) end
+                            
+                            evadePos = target.Position + (escapeDir * 40) + Vector3.new(0, Config.AutoFarmHeight, 0)
+                            break -- Langsung keluar loop jika sudah ketemu bahaya terdekat
                         end
                     end
                 end
 
-                root.Velocity = Vector3.new(0,0,0) -- Tahan Gravitasi
+                root.Velocity = Vector3.new(0,0,0) 
                 
                 if isEvading and evadePos then
-                    -- Mode Menghindar: Geser posisi tapi tetap bidik target
                     root.CFrame = CFrame.lookAt(evadePos, target.Position)
                 else
-                    -- Mode Normal: Tepat di atas target
+                    -- Mode Normal: Kembali ke atas target
                     local goalPosition = target.Position + Vector3.new(0, Config.AutoFarmHeight, 0)
                     root.CFrame = CFrame.lookAt(goalPosition, target.Position)
                 end
