@@ -13,30 +13,73 @@ local character = player.Character or player.CharacterAdded:Wait()
 local rootPart = character:WaitForChild("HumanoidRootPart")
 
 -- ==========================================
--- 🔗 HOOKING DINAMIS (MENCARI LOKASI OTOMATIS)
+-- 🔗 HOOKING ULTIMATE (BYPASS KNIT FRAMEWORK)
 -- ==========================================
-print("Mencoba mencari lokasi Controller...")
+print("Mencoba mengakses Controller Game secara paksa...")
 
 local AutoAttackController = nil
 local EntityController = nil
 
--- Kita cari di seluruh ReplicatedStorage sampai ketemu
-for _, obj in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
-    if obj:IsA("ModuleScript") then
-        if obj.Name == "AutoAttackController" then
-            AutoAttackController = require(obj)
-            print("✅ AutoAttackController ditemukan di: " .. obj:GetFullName())
-        elseif obj.Name == "EntityController" then
-            EntityController = require(obj)
-            print("✅ EntityController ditemukan di: " .. obj:GetFullName())
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+-- METODE 1: Mencoba mencari Core Knit dan meminta modul secara resmi
+local function tryKnitHook()
+    local Knit = nil
+    -- Cari modul bernama "Knit" di ReplicatedStorage
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if obj:IsA("ModuleScript") and obj.Name == "Knit" then
+            pcall(function() Knit = require(obj) end)
+            break
+        end
+    end
+    
+    if Knit and type(Knit) == "table" and Knit.GetController then
+        pcall(function() AutoAttackController = Knit.GetController("AutoAttackController") end)
+        pcall(function() EntityController = Knit.GetController("EntityController") end)
+    end
+end
+
+-- METODE 2: Mencari di PlayerScripts (Tempat Knit sering memindahkan modul)
+local function tryPlayerScriptsHook()
+    local playerScripts = Players.LocalPlayer:WaitForChild("PlayerScripts")
+    for _, obj in ipairs(playerScripts:GetDescendants()) do
+        if obj:IsA("ModuleScript") then
+            if obj.Name == "AutoAttackController" and not AutoAttackController then
+                pcall(function() AutoAttackController = require(obj) end)
+            elseif obj.Name == "EntityController" and not EntityController then
+                pcall(function() EntityController = require(obj) end)
+            end
         end
     end
 end
 
-if not AutoAttackController or not EntityController then
-    error("❌ Gagal menemukan Controller! Mungkin nama modul berubah.")
+-- METODE 3: Mencari ulang di ReplicatedStorage sebagai cadangan
+local function tryFallbackHook()
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if obj:IsA("ModuleScript") then
+            if obj.Name == "AutoAttackController" and not AutoAttackController then
+                pcall(function() AutoAttackController = require(obj) end)
+            elseif obj.Name == "EntityController" and not EntityController then
+                pcall(function() EntityController = require(obj) end)
+            end
+        end
+    end
 end
-print("✅ Hooking Berhasil!")
+
+-- Eksekusi semua metode secara berurutan
+tryKnitHook()
+if not AutoAttackController or not EntityController then tryPlayerScriptsHook() end
+if not AutoAttackController or not EntityController then tryFallbackHook() end
+
+-- Validasi Akhir
+if AutoAttackController and EntityController then
+    print("✅ Hooking Berhasil 100%! AutoAttack dan Entity siap.")
+else
+    warn("❌ Hooking Gagal! Cek F9 untuk melihat apakah nama modul diubah oleh developer.")
+    if not AutoAttackController then warn("-> AutoAttackController tidak ditemukan") end
+    if not EntityController then warn("-> EntityController tidak ditemukan") end
+end
 
 -- ==========================================
 -- VARIABEL KONTROL TINGKAT LANJUT
