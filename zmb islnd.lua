@@ -38,26 +38,28 @@ local noclipConnection = nil
 local farmConnection = nil
 
 -- ==========================================
--- SISTEM RADAR BAHAYA (AKTIF SCANNER)
+-- SISTEM RADAR BAHAYA (OPTIMASI CACHE)
 -- ==========================================
-local function getActiveHazards()
-    local hazards = {}
-    -- Kita scan area di sekitar boss atau area tempur
-    -- Mengincar Part yang menjadi indikator lingkaran merah (biasanya Decal atau Part khusus)
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("BasePart") then
-            local name = string.lower(obj.Name)
-            -- Memperluas deteksi: mencari nama yang mengandung tentacle, warning, atau aoe
-            if string.find(name, "tentacle") or string.find(name, "warning") or string.find(name, "circle") or string.find(name, "aoe") then
-                -- Hanya ambil yang terlihat (visible) atau aktif
-                if obj.Transparency < 0.8 then 
-                    table.insert(hazards, obj)
+local cachedHazards = {}
+
+-- Jalankan scan terpisah agar tidak membebani loop utama
+task.spawn(function()
+    while true do
+        local tempHazards = {}
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                local name = string.lower(obj.Name)
+                if string.find(name, "tentacle") or string.find(name, "warning") or string.find(name, "circle") or string.find(name, "aoe") then
+                    if obj.Transparency < 0.8 then 
+                        table.insert(tempHazards, obj)
+                    end
                 end
             end
         end
+        cachedHazards = tempHazards -- Update cache
+        task.wait(0.1) -- Scan setiap 0.1 detik (sangat ringan & cukup responsif)
     end
-    return hazards
-end
+end)
 
 -- ==========================================
 -- FUNGSI LOGIKA (BACKEND)
@@ -162,27 +164,25 @@ local function toggleAutoFarm(state)
                 local isEvading = false
                 local evadePos = nil
                 
-                -- LOGIKA AUTO DODGE (SCANNER AKTIF)
+                -- LOGIKA AUTO DODGE (MENGGUNAKAN CACHE, BUKAN SCAN ULANG)
                 if Config.AutoDodge then
-                    local currentHazards = getActiveHazards() -- Scan setiap frame
-                    for _, part in ipairs(currentHazards) do
-                        local p1 = Vector3.new(root.Position.X, 0, root.Position.Z)
-                        local p2 = Vector3.new(part.Position.X, 0, part.Position.Z)
-                        
-                        -- Radius bahaya diperbesar sedikit agar lebih responsif
-                        if (p1 - p2).Magnitude < 30 then 
-                            isEvading = true
-                            -- Arah menghindar menjauhi pusat bahaya
-                            local escapeDir = (p1 - p2).Unit
-                            if escapeDir.X ~= escapeDir.X then escapeDir = Vector3.new(1,0,0) end
+                    for _, part in ipairs(cachedHazards) do
+                        if part and part.Parent then
+                            local p1 = Vector3.new(root.Position.X, 0, root.Position.Z)
+                            local p2 = Vector3.new(part.Position.X, 0, part.Position.Z)
                             
-                            evadePos = target.Position + (escapeDir * 40) + Vector3.new(0, Config.AutoFarmHeight, 0)
-                            break -- Langsung keluar loop jika sudah ketemu bahaya terdekat
+                            if (p1 - p2).Magnitude < 30 then 
+                                isEvading = true
+                                local escapeDir = (p1 - p2).Unit
+                                if escapeDir.X ~= escapeDir.X then escapeDir = Vector3.new(1,0,0) end
+                                evadePos = target.Position + (escapeDir * 40) + Vector3.new(0, Config.AutoFarmHeight, 0)
+                                break 
+                            end
                         end
                     end
                 end
 
-                root.Velocity = Vector3.new(0,0,0) 
+                root.Velocity = Vector3.new(0,0,0)
                 
                 if isEvading and evadePos then
                     root.CFrame = CFrame.lookAt(evadePos, target.Position)
