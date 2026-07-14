@@ -13,11 +13,29 @@ local character = player.Character or player.CharacterAdded:Wait()
 local rootPart = character:WaitForChild("HumanoidRootPart")
 
 -- ==========================================
--- 🔗 HOOKING KE MODULE GAME (KNIT)
+-- 🔗 HOOKING DINAMIS (MENCARI LOKASI OTOMATIS)
 -- ==========================================
-print("Mencoba mengakses Controller Game...")
-local AutoAttackController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("Modules"):WaitForChild("Platform"):WaitForChild("AutoAttackController"))
-local EntityController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("Game"):WaitForChild("EntityController"))
+print("Mencoba mencari lokasi Controller...")
+
+local AutoAttackController = nil
+local EntityController = nil
+
+-- Kita cari di seluruh ReplicatedStorage sampai ketemu
+for _, obj in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+    if obj:IsA("ModuleScript") then
+        if obj.Name == "AutoAttackController" then
+            AutoAttackController = require(obj)
+            print("✅ AutoAttackController ditemukan di: " .. obj:GetFullName())
+        elseif obj.Name == "EntityController" then
+            EntityController = require(obj)
+            print("✅ EntityController ditemukan di: " .. obj:GetFullName())
+        end
+    end
+end
+
+if not AutoAttackController or not EntityController then
+    error("❌ Gagal menemukan Controller! Mungkin nama modul berubah.")
+end
 print("✅ Hooking Berhasil!")
 
 -- ==========================================
