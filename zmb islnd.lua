@@ -1,6 +1,6 @@
 -- ==========================================
--- SCRIPT AUTOFARM (OVERHEAD + KNIT HOOK)
--- Fitur: Autofarm Overhead, Float, Noclip, Direct Auto-Attack
+-- SCRIPT AUTOFARM (OVERHEAD + AUTO DODGE BOSS)
+-- Fitur: Autofarm, Float, Noclip, Direct Auto-Attack, Auto Evasion
 -- ==========================================
 
 local Players = game:GetService("Players")
@@ -25,6 +25,7 @@ print("✅ Hooking Berhasil!")
 -- ==========================================
 local Config = {
     AutoFarm = false,
+    AutoDodge = false, -- FITUR BARU
     AutoFarmHeight = 45,
     Float = false,
     FloatHeight = 15,
@@ -37,14 +38,28 @@ local noclipConnection = nil
 local farmConnection = nil
 
 -- ==========================================
--- FUNGSI LOGIKA (BACKEND) - FIXED & UPGRADED
+-- SISTEM RADAR BAHAYA (TENTACLE / RED CIRCLE)
+-- ==========================================
+local activeHazards = {}
+
+-- Mendengarkan objek baru yang muncul di game
+workspace.DescendantAdded:Connect(function(obj)
+    if obj:IsA("BasePart") or obj:IsA("Model") then
+        local name = string.lower(obj.Name)
+        -- Jika namanya mengandung tentacle, warning, circle, atau aoe
+        if string.find(name, "tentacle") or string.find(name, "warning") or string.find(name, "circle") or string.find(name, "aoe") then
+            table.insert(activeHazards, obj)
+        end
+    end
+end)
+
+-- ==========================================
+-- FUNGSI LOGIKA (BACKEND)
 -- ==========================================
 
--- 1. FUNGSI MENCARI MUSUH (ANTI-GAGAL)
 local function getBestTarget()
     local bestTarget = nil
     local shortestDist = math.huge
-    
     local char = player.Character
     if not char then return nil end
     local root = char:FindFirstChild("HumanoidRootPart")
@@ -52,47 +67,35 @@ local function getBestTarget()
     
     local playerPos = root.Position
     
-    -- METODE A: Coba gunakan folder resmi dari Controller game
     if EntityController.EntityViewRoot and typeof(EntityController.EntityViewRoot) == "Instance" then
         for _, obj in ipairs(EntityController.EntityViewRoot:GetChildren()) do
             local targetRoot = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart")
-            -- Pastikan objek punya nyawa (Humanoid) atau UI Health, dan bukan player lain
             if targetRoot and not Players:GetPlayerFromCharacter(obj) then
                 local dist = (playerPos - targetRoot.Position).Magnitude
-                if dist < shortestDist then
-                    shortestDist = dist
-                    bestTarget = targetRoot
-                end
+                if dist < shortestDist then shortestDist = dist; bestTarget = targetRoot end
             end
         end
         if bestTarget then return bestTarget end
     end
     
-    -- METODE B: Fallback Paksa (Scan folder rahasia game seperti ActiveSpirits, Live, World)
     local foldernames = {"ActiveSpirits", "Live", "World", "Mobs", "Entities"}
     for _, fname in ipairs(foldernames) do
         local f = workspace:FindFirstChild(fname)
         if f then
             for _, obj in ipairs(f:GetDescendants()) do
-                -- Cari model yang bukan player
                 if obj:IsA("Model") and not Players:GetPlayerFromCharacter(obj) then
                     local targetRoot = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart")
                     if targetRoot then
                         local dist = (playerPos - targetRoot.Position).Magnitude
-                        if dist < shortestDist then
-                            shortestDist = dist
-                            bestTarget = targetRoot
-                        end
+                        if dist < shortestDist then shortestDist = dist; bestTarget = targetRoot end
                     end
                 end
             end
         end
     end
-    
     return bestTarget
 end
 
--- 2. FUNGSI FLOAT (MELAYANG)
 local function toggleFloat(state)
     local char = player.Character
     if not char then return end
@@ -116,7 +119,6 @@ local function toggleFloat(state)
     end
 end
 
--- 3. FUNGSI NOCLIP (TEMBUS TEMBOK)
 local function toggleNoclip(state)
     if state then
         if not noclipConnection then
@@ -124,9 +126,7 @@ local function toggleNoclip(state)
                 local char = player.Character
                 if char then
                     for _, part in ipairs(char:GetDescendants()) do
-                        if part:IsA("BasePart") then
-                            part.CanCollide = false
-                        end
+                        if part:IsA("BasePart") then part.CanCollide = false end
                     end
                 end
             end)
@@ -139,10 +139,8 @@ local function toggleNoclip(state)
     end
 end
 
--- 4. FUNGSI AUTOFARM LOOP (OVERHEAD + AIM + ATTACK)
 local function toggleAutoFarm(state)
     if state then
-        -- Memicu serangan otomatis ke controller game
         pcall(function() AutoAttackController:SetManualFireHeld(true) end)
         pcall(function() AutoAttackController:Toggle(true) end)
         
@@ -155,22 +153,51 @@ local function toggleAutoFarm(state)
             local target = getBestTarget()
             
             if target then
-                -- Menghitung Posisi Ketinggian Overhead
-                local goalPosition = target.Position + Vector3.new(0, Config.AutoFarmHeight, 0)
+                local isEvading = false
+                local evadePos = nil
                 
-                -- Membekukan gravitasi saat berada di atas monster agar tidak jatuh/glitch
-                root.Velocity = Vector3.new(0,0,0)
+                -- LOGIKA AUTO DODGE
+                if Config.AutoDodge then
+                    for i = #activeHazards, 1, -1 do
+                        local hazard = activeHazards[i]
+                        -- Hapus dari memori jika tentakel/lingkaran sudah hilang dari map
+                        if not hazard or not hazard.Parent then
+                            table.remove(activeHazards, i)
+                        else
+                            local part = hazard:IsA("Model") and (hazard.PrimaryPart or hazard:FindFirstChildWhichIsA("BasePart")) or hazard
+                            if part then
+                                -- MENGHITUNG JARAK HORIZONTAL (2D)
+                                local p1 = Vector3.new(root.Position.X, 0, root.Position.Z)
+                                local p2 = Vector3.new(part.Position.X, 0, part.Position.Z)
+                                
+                                if (p1 - p2).Magnitude < 25 then -- Radius bahaya (25 studs)
+                                    isEvading = true
+                                    -- Kalkulasi arah menghindar (bergeser 35 studs menjauh dari tentakel)
+                                    local escapeDir = (p1 - p2).Unit
+                                    if escapeDir.X ~= escapeDir.X then escapeDir = Vector3.new(1,0,0) end -- Anti NaN (Jika posisi sama persis)
+                                    
+                                    evadePos = target.Position + (escapeDir * 35) + Vector3.new(0, Config.AutoFarmHeight, 0)
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+
+                root.Velocity = Vector3.new(0,0,0) -- Tahan Gravitasi
                 
-                -- Memindahkan CFrame ke goalPosition, lalu Aiming (menatap) ke arah target
-                root.CFrame = CFrame.lookAt(goalPosition, target.Position)
+                if isEvading and evadePos then
+                    -- Mode Menghindar: Geser posisi tapi tetap bidik target
+                    root.CFrame = CFrame.lookAt(evadePos, target.Position)
+                else
+                    -- Mode Normal: Tepat di atas target
+                    local goalPosition = target.Position + Vector3.new(0, Config.AutoFarmHeight, 0)
+                    root.CFrame = CFrame.lookAt(goalPosition, target.Position)
+                end
             end
         end)
     else
-        if farmConnection then 
-            farmConnection:Disconnect() 
-            farmConnection = nil
-        end
-        -- Matikan serangan saat autofarm mati
+        if farmConnection then farmConnection:Disconnect(); farmConnection = nil end
         pcall(function() AutoAttackController:SetManualFireHeld(false) end)
         pcall(function() AutoAttackController:Toggle(false) end)
     end
@@ -183,8 +210,8 @@ local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
 ScreenGui.Name = "Advanced_Grinder_UI"
 
 local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.Size = UDim2.new(0, 280, 0, 300)
-MainFrame.Position = UDim2.new(0.5, -140, 0.5, -150)
+MainFrame.Size = UDim2.new(0, 280, 0, 340) -- Tinggi ditambah untuk tombol Dodge
+MainFrame.Position = UDim2.new(0.5, -140, 0.5, -170)
 MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
 MainFrame.Active = true; MainFrame.Draggable = true
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
@@ -193,7 +220,6 @@ local UIListLayout = Instance.new("UIListLayout", MainFrame)
 UIListLayout.Padding = UDim.new(0, 8); UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 Instance.new("UIPadding", MainFrame).PaddingTop = UDim.new(0, 10)
 
--- Template Pembuat Baris UI
 local function CreateRow(text, hasToggle, isNumberVal, defaultNum)
     local Row = Instance.new("Frame", MainFrame)
     Row.Size = UDim2.new(0.9, 0, 0, 40)
@@ -219,13 +245,11 @@ local function CreateRow(text, hasToggle, isNumberVal, defaultNum)
         Indicator.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
         Instance.new("UICorner", Indicator).CornerRadius = UDim.new(1, 0)
         
-        Controller.Toggle = ToggleBtn
-        Controller.Indicator = Indicator
+        Controller.Toggle = ToggleBtn; Controller.Indicator = Indicator
     end
     
     if isNumberVal then
         Label.Text = text .. ": " .. defaultNum
-        
         local MinusBtn = Instance.new("TextButton", Row)
         MinusBtn.Size = UDim2.new(0, 25, 0, 25); MinusBtn.Position = UDim2.new(0.7, 0, 0.2, 0)
         MinusBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70); MinusBtn.Text = "-"
@@ -236,21 +260,27 @@ local function CreateRow(text, hasToggle, isNumberVal, defaultNum)
         PlusBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70); PlusBtn.Text = "+"
         PlusBtn.TextColor3 = Color3.fromRGB(255, 255, 255); Instance.new("UICorner", PlusBtn).CornerRadius = UDim.new(0, 4)
         
-        Controller.Label = Label
-        Controller.Minus = MinusBtn
-        Controller.Plus = PlusBtn
+        Controller.Label = Label; Controller.Minus = MinusBtn; Controller.Plus = PlusBtn
     end
-    
     return Controller
 end
 
--- Membangun UI dan Menyambungkan Logika
+-- ==========================================
+-- MENYAMBUNGKAN UI DENGAN LOGIKA
+-- ==========================================
 local FarmUI = CreateRow("Autofarm (Overhead + Aim)", true, false)
 FarmUI.Toggle.MouseButton1Click:Connect(function()
     Config.AutoFarm = not Config.AutoFarm
     FarmUI.Indicator.Position = Config.AutoFarm and UDim2.new(1, -18, 0, 2) or UDim2.new(0, 2, 0, 2)
     FarmUI.Toggle.BackgroundColor3 = Config.AutoFarm and Color3.fromRGB(40, 150, 255) or Color3.fromRGB(60, 60, 70)
     toggleAutoFarm(Config.AutoFarm)
+end)
+
+local DodgeUI = CreateRow("Auto Dodge Boss (AoE)", true, false)
+DodgeUI.Toggle.MouseButton1Click:Connect(function()
+    Config.AutoDodge = not Config.AutoDodge
+    DodgeUI.Indicator.Position = Config.AutoDodge and UDim2.new(1, -18, 0, 2) or UDim2.new(0, 2, 0, 2)
+    DodgeUI.Toggle.BackgroundColor3 = Config.AutoDodge and Color3.fromRGB(40, 150, 255) or Color3.fromRGB(60, 60, 70)
 end)
 
 local HeightUI = CreateRow("Autofarm Height", false, true, Config.AutoFarmHeight)
@@ -273,11 +303,9 @@ NoclipUI.Toggle.MouseButton1Click:Connect(function()
     toggleNoclip(Config.Noclip)
 end)
 
--- Keybind Listener
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Config.Keybind then
-        -- Simulasikan klik pada toggle autofarm
         Config.AutoFarm = not Config.AutoFarm
         FarmUI.Indicator.Position = Config.AutoFarm and UDim2.new(1, -18, 0, 2) or UDim2.new(0, 2, 0, 2)
         FarmUI.Toggle.BackgroundColor3 = Config.AutoFarm and Color3.fromRGB(40, 150, 255) or Color3.fromRGB(60, 60, 70)
@@ -285,4 +313,4 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
-print("✅ Advanced Grinder Terpasang Sempurna!")
+print("✅ Auto Dodge Boss Berhasil Ditambahkan!")
