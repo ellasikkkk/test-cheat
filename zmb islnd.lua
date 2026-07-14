@@ -37,50 +37,77 @@ local noclipConnection = nil
 local farmConnection = nil
 
 -- ==========================================
--- FUNGSI LOGIKA (BACKEND)
+-- FUNGSI LOGIKA (BACKEND) - FIXED & UPGRADED
 -- ==========================================
 
--- 1. FUNGSI MENCARI MUSUH VIA RUNTIME ENTITY
+-- 1. FUNGSI MENCARI MUSUH (ANTI-GAGAL)
 local function getBestTarget()
     local bestTarget = nil
-    local shortestDistance = math.huge
+    local shortestDist = math.huge
     
-    if not EntityController.Runtime then return nil end
+    local char = player.Character
+    if not char then return nil end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
     
-    -- Membaca tabel Runtime dari game itu sendiri
-    for entityId, entityData in pairs(EntityController.Runtime) do
-        -- Dapatkan model fisiknya
-        local model = EntityController:GetEntityModel(entityId)
-        
-        -- Validasi jika model ada dan memiliki nyawa
-        if model and model.PrimaryPart then
-            local healthInfo = EntityController:GetPredictedHealthInfo(entityId)
-            
-            -- Jika bukan player dan masih hidup (asumsi HP > 0)
-            if healthInfo and healthInfo.Health > 0 and not Players:GetPlayerFromCharacter(model) then
-                local distance = (rootPart.Position - model.PrimaryPart.Position).Magnitude
-                if distance < shortestDistance then
-                    shortestDistance = distance
-                    bestTarget = model.PrimaryPart
+    local playerPos = root.Position
+    
+    -- METODE A: Coba gunakan folder resmi dari Controller game
+    if EntityController.EntityViewRoot and typeof(EntityController.EntityViewRoot) == "Instance" then
+        for _, obj in ipairs(EntityController.EntityViewRoot:GetChildren()) do
+            local targetRoot = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart")
+            -- Pastikan objek punya nyawa (Humanoid) atau UI Health, dan bukan player lain
+            if targetRoot and not Players:GetPlayerFromCharacter(obj) then
+                local dist = (playerPos - targetRoot.Position).Magnitude
+                if dist < shortestDist then
+                    shortestDist = dist
+                    bestTarget = targetRoot
+                end
+            end
+        end
+        if bestTarget then return bestTarget end
+    end
+    
+    -- METODE B: Fallback Paksa (Scan folder rahasia game seperti ActiveSpirits, Live, World)
+    local foldernames = {"ActiveSpirits", "Live", "World", "Mobs", "Entities"}
+    for _, fname in ipairs(foldernames) do
+        local f = workspace:FindFirstChild(fname)
+        if f then
+            for _, obj in ipairs(f:GetDescendants()) do
+                -- Cari model yang bukan player
+                if obj:IsA("Model") and not Players:GetPlayerFromCharacter(obj) then
+                    local targetRoot = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart")
+                    if targetRoot then
+                        local dist = (playerPos - targetRoot.Position).Magnitude
+                        if dist < shortestDist then
+                            shortestDist = dist
+                            bestTarget = targetRoot
+                        end
+                    end
                 end
             end
         end
     end
+    
     return bestTarget
 end
 
 -- 2. FUNGSI FLOAT (MELAYANG)
 local function toggleFloat(state)
+    local char = player.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
     if state then
         if not floatBodyVelocity then
             floatBodyVelocity = Instance.new("BodyVelocity")
             floatBodyVelocity.Name = "AutoFarmFloat"
             floatBodyVelocity.MaxForce = Vector3.new(0, math.huge, 0)
             floatBodyVelocity.Velocity = Vector3.new(0, 0, 0)
-            floatBodyVelocity.Parent = rootPart
+            floatBodyVelocity.Parent = root
         end
-        -- Kunci di ketinggian tertentu dari tanah (opsional, sementara dikunci Y velocity)
-        rootPart.CFrame = CFrame.new(rootPart.Position.X, Config.FloatHeight, rootPart.Position.Z)
+        root.CFrame = CFrame.new(root.Position.X, Config.FloatHeight, root.Position.Z)
     else
         if floatBodyVelocity then
             floatBodyVelocity:Destroy()
@@ -94,9 +121,12 @@ local function toggleNoclip(state)
     if state then
         if not noclipConnection then
             noclipConnection = RunService.Stepped:Connect(function()
-                for _, part in ipairs(character:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.CanCollide = false
+                local char = player.Character
+                if char then
+                    for _, part in ipairs(char:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.CanCollide = false
+                        end
                     end
                 end
             end)
@@ -112,26 +142,37 @@ end
 -- 4. FUNGSI AUTOFARM LOOP (OVERHEAD + AIM + ATTACK)
 local function toggleAutoFarm(state)
     if state then
-        -- Memicu fungsi Auto Attack bawaan game secara paksa
+        -- Memicu serangan otomatis ke controller game
         pcall(function() AutoAttackController:SetManualFireHeld(true) end)
+        pcall(function() AutoAttackController:Toggle(true) end)
         
         farmConnection = RunService.Heartbeat:Connect(function()
+            local char = player.Character
+            if not char then return end
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if not root then return end
+
             local target = getBestTarget()
+            
             if target then
-                -- Posisi persis di atas musuh
-                local overheadPosition = target.Position + Vector3.new(0, Config.AutoFarmHeight, 0)
+                -- Menghitung Posisi Ketinggian Overhead
+                local goalPosition = target.Position + Vector3.new(0, Config.AutoFarmHeight, 0)
                 
-                -- Memindahkan dan membidik (Aiming ke bawah menatap musuh)
-                rootPart.CFrame = CFrame.lookAt(overheadPosition, target.Position)
+                -- Membekukan gravitasi saat berada di atas monster agar tidak jatuh/glitch
+                root.Velocity = Vector3.new(0,0,0)
                 
-                -- Pastikan tidak jatuh dengan menahan gravitasi
-                rootPart.Velocity = Vector3.new(0,0,0)
+                -- Memindahkan CFrame ke goalPosition, lalu Aiming (menatap) ke arah target
+                root.CFrame = CFrame.lookAt(goalPosition, target.Position)
             end
         end)
     else
-        if farmConnection then farmConnection:Disconnect() end
-        -- Matikan serangan
+        if farmConnection then 
+            farmConnection:Disconnect() 
+            farmConnection = nil
+        end
+        -- Matikan serangan saat autofarm mati
         pcall(function() AutoAttackController:SetManualFireHeld(false) end)
+        pcall(function() AutoAttackController:Toggle(false) end)
     end
 end
 
